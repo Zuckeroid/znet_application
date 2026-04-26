@@ -141,7 +141,29 @@ class MainViewModel(
         loadInstalledApps()
         viewModelScope.launch {
             val prefs = preferencesRepository.preferences.first()
-            authTokenInput.value = prefs.authToken.ifBlank { prefs.deviceToken }
+            val persistedToken = prefs.authToken.ifBlank { prefs.deviceToken }
+            authTokenInput.value = persistedToken
+
+            if (persistedToken.length == REQUIRED_TOKEN_LENGTH) {
+                authInProgress.value = true
+                val restore = vpnRepository.refreshAccessBundle()
+                restore.fold(
+                    onSuccess = { access ->
+                        resolvedAccess.value = access
+                        loadedNodes.value = listOf(access.node)
+                        preferencesRepository.setSelectedNode(access.node.id)
+                        isAuthenticated.value = true
+                        authError.value = null
+                        debugApiResponse.value = null
+                        message.value = null
+                    },
+                    onFailure = {
+                        resolvedAccess.value = null
+                        isAuthenticated.value = false
+                    }
+                )
+                authInProgress.value = false
+            }
         }
     }
 
@@ -292,27 +314,9 @@ class MainViewModel(
         viewModelScope.launch {
             val prefs: UserPreferences = preferencesRepository.preferences.first()
             val manualVlessLink = prefs.manualVlessLink.trim()
-            val linkedFromAuth = prefs.selectedSubscriptionLink.trim()
-            val linkedFromFiltered = prefs.filteredSubscriptionLinks
-                .lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.startsWith("vless://", ignoreCase = true) }
-                .orEmpty()
-            val linkedFromActive = prefs.activeSubscriptionLinks
-                .lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.startsWith("vless://", ignoreCase = true) }
-                .orEmpty()
-            val preferredVlessLink = when {
-                manualVlessLink.isNotBlank() -> manualVlessLink
-                linkedFromAuth.startsWith("vless://", ignoreCase = true) -> linkedFromAuth
-                linkedFromFiltered.isNotBlank() -> linkedFromFiltered
-                linkedFromActive.isNotBlank() -> linkedFromActive
-                else -> ""
-            }
-            if (preferredVlessLink.isNotBlank()) {
+            if (manualVlessLink.isNotBlank()) {
                 busy.value = true
-                val resolved = vpnRepository.resolveManualVlessLink(preferredVlessLink)
+                val resolved = vpnRepository.resolveManualVlessLink(manualVlessLink)
                 resolved.fold(
                     onSuccess = { access ->
                         resolvedAccess.value = access
@@ -336,8 +340,11 @@ class MainViewModel(
             }
 
             if (!isAuthenticated.value) {
-                message.value = "Sign in first"
-                return@launch
+                val persistedToken = prefs.authToken.ifBlank { prefs.deviceToken }
+                if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {
+                    message.value = "Sign in first"
+                    return@launch
+                }
             }
 
             busy.value = true

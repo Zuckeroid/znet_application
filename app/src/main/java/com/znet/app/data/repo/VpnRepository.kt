@@ -3,10 +3,12 @@
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.os.Build
 import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.DeviceRegistrationData
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
 import com.znet.app.vpn.ZnetVpnService
@@ -68,9 +70,11 @@ class VpnRepository(
             require(cleanToken.length == REQUIRED_TOKEN_LENGTH) { INVALID_TOKEN_MESSAGE }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
+            val deviceData = buildDeviceRegistrationData()
             val access = orchestratorClient.resolveTokenAccess(
                 baseUrl = authBaseUrl,
-                token = cleanToken
+                token = cleanToken,
+                deviceData = deviceData
             ).getOrThrow()
 
             finalizeAuthentication(
@@ -90,9 +94,11 @@ class VpnRepository(
             require(sessionToken.isNotBlank()) { "токен не найден" }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
+            val deviceData = buildDeviceRegistrationData()
             val access = orchestratorClient.resolveTokenAccess(
                 baseUrl = authBaseUrl,
-                token = sessionToken
+                token = sessionToken,
+                deviceData = deviceData
             ).getOrThrow()
 
             finalizeAuthentication(
@@ -145,6 +151,30 @@ class VpnRepository(
             action = ZnetVpnService.ACTION_DISCONNECT
         }
         context.startService(intent)
+    }
+
+    private suspend fun buildDeviceRegistrationData(): DeviceRegistrationData {
+        val installId = preferencesRepository.getOrCreateDeviceId()
+        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+        val model = Build.MODEL?.trim().orEmpty()
+        val brand = Build.BRAND?.trim().orEmpty()
+
+        val deviceName = when {
+            model.isBlank() && manufacturer.isBlank() && brand.isBlank() -> "Android device"
+            manufacturer.isNotBlank() && model.startsWith(manufacturer, ignoreCase = true) -> model
+            brand.isNotBlank() && model.startsWith(brand, ignoreCase = true) -> model
+            manufacturer.isNotBlank() && model.isNotBlank() -> "$manufacturer $model"
+            brand.isNotBlank() && model.isNotBlank() -> "$brand $model"
+            model.isNotBlank() -> model
+            manufacturer.isNotBlank() -> manufacturer
+            else -> brand
+        }
+
+        return DeviceRegistrationData(
+            deviceName = deviceName.take(255),
+            platform = "android",
+            installId = installId.take(255)
+        )
     }
 
     private suspend fun finalizeAuthentication(

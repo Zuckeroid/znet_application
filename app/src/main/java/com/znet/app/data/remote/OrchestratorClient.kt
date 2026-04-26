@@ -32,17 +32,23 @@ class OrchestratorClient(
 
     suspend fun resolveTokenAccess(
         baseUrl: String,
-        token: String
+        token: String,
+        deviceData: DeviceRegistrationData? = null
     ): Result<TokenAccessResponse> = withContext(Dispatchers.IO) {
         runCatching {
-            val rawBody = requestTokenAuthRaw(baseUrl = baseUrl, token = token).getOrThrow()
+            val rawBody = requestTokenAuthRaw(
+                baseUrl = baseUrl,
+                token = token,
+                deviceData = deviceData
+            ).getOrThrow()
             parseTokenAccessResponse(rawBody)
         }
     }
 
     suspend fun requestTokenAuthRaw(
         baseUrl: String,
-        token: String
+        token: String,
+        deviceData: DeviceRegistrationData? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val normalizedBase = baseUrl.trimEnd('/')
@@ -50,17 +56,23 @@ class OrchestratorClient(
             require(token.isNotBlank()) { "Token is empty" }
 
             val endpoint = "$normalizedBase$TOKEN_AUTH_PATH".toHttpUrl()
-            executeTokenAuthRequest(endpoint, token.trim())
+            executeTokenAuthRequest(endpoint, token.trim(), deviceData)
         }
     }
 
     private fun executeTokenAuthRequest(
         endpoint: okhttp3.HttpUrl,
-        token: String
+        token: String,
+        deviceData: DeviceRegistrationData?
     ): String {
         val requestPayload = json.encodeToString(
             TokenAuthRequest.serializer(),
-            TokenAuthRequest(appToken = token)
+            TokenAuthRequest(
+                appToken = token,
+                deviceName = deviceData?.deviceName,
+                platform = deviceData?.platform,
+                installId = deviceData?.installId
+            )
         ).toRequestBody("application/json".toMediaType())
 
         val postRequest = Request.Builder()
@@ -354,7 +366,19 @@ class OrchestratorClient(
 @Serializable
 private data class TokenAuthRequest(
     @SerialName("app_token")
-    val appToken: String
+    val appToken: String,
+    @SerialName("device_name")
+    val deviceName: String? = null,
+    @SerialName("platform")
+    val platform: String? = null,
+    @SerialName("install_id")
+    val installId: String? = null
+)
+
+data class DeviceRegistrationData(
+    val deviceName: String,
+    val platform: String,
+    val installId: String
 )
 
 data class TokenAccessResponse(
