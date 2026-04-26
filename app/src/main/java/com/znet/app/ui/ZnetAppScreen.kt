@@ -542,7 +542,7 @@ private fun ServersScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Серверы", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text("Доступ", color = Color.White, style = MaterialTheme.typography.titleLarge)
             Button(
                 onClick = onRefresh,
                 colors = ButtonDefaults.buttonColors(
@@ -551,14 +551,14 @@ private fun ServersScreen(
                 ),
                 border = BorderStroke(1.2.dp, NeonButtonOutline)
             ) {
-                Text("Обновить")
+                Text("Обновить доступ")
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         if (state.nodes.isEmpty()) {
-            Text("Ноды не загружены", color = Color(0xFF9EB0BE))
+            Text("Доступ еще не получен", color = Color(0xFF9EB0BE))
             return
         }
 

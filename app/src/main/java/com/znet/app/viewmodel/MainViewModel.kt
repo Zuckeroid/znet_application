@@ -152,14 +152,16 @@ class MainViewModel(
         }
         viewModelScope.launch {
             busy.value = true
-            val result = vpnRepository.fetchNodes()
+            val result = vpnRepository.refreshAccessBundle()
             result.fold(
-                onSuccess = { nodes ->
-                    loadedNodes.value = nodes
-                    message.value = if (nodes.isEmpty()) "No nodes available" else null
+                onSuccess = { access ->
+                    resolvedAccess.value = access
+                    loadedNodes.value = listOf(access.node)
+                    preferencesRepository.setSelectedNode(access.node.id)
+                    message.value = null
                 },
                 onFailure = { err ->
-                    message.value = err.message ?: "Failed to load nodes"
+                    message.value = err.message ?: "Failed to refresh access"
                 }
             )
             busy.value = false
@@ -338,59 +340,24 @@ class MainViewModel(
                 return@launch
             }
 
-            val tokenResolved = resolvedAccess.value
-            if (tokenResolved != null) {
-                busy.value = true
-                preferencesRepository.setSelectedNode(tokenResolved.node.id)
-                vpnRepository.startVpn(
-                    node = tokenResolved.node,
-                    xrayConfig = tokenResolved.xrayConfig,
-                    splitTunnelApps = prefs.splitTunnelApps,
-                    autoDisconnectApps = prefs.autoDisconnectApps,
-                    latencyMs = -1L
-                )
-                message.value = null
-                busy.value = false
-                return@launch
-            }
-
-            var nodes = loadedNodes.value
-            if (nodes.isEmpty()) {
-                val refreshed = vpnRepository.fetchNodes()
-                nodes = refreshed.getOrElse {
-                    message.value = it.message ?: "Unable to fetch nodes"
-                    return@launch
-                }
-                loadedNodes.value = nodes
-            }
-            if (nodes.isEmpty()) {
-                message.value = "No nodes available"
-                return@launch
-            }
-
             busy.value = true
-            val defaultNode = nodes.firstOrNull { it.id == prefs.selectedNodeId } ?: nodes.first()
-            val (targetNode, latencyMs) = if (prefs.adaptiveEnabled) {
-                vpnRepository.chooseNode(nodes)
-            } else {
-                defaultNode to -1L
-            }
-
-            preferencesRepository.setSelectedNode(targetNode.id)
-            val configResult = vpnRepository.fetchXrayConfig(targetNode.id)
-            configResult.fold(
-                onSuccess = { config ->
+            val accessResult = resolvedAccess.value?.let { Result.success(it) } ?: vpnRepository.refreshAccessBundle()
+            accessResult.fold(
+                onSuccess = { access ->
+                    resolvedAccess.value = access
+                    loadedNodes.value = listOf(access.node)
+                    preferencesRepository.setSelectedNode(access.node.id)
                     vpnRepository.startVpn(
-                        node = targetNode,
-                        xrayConfig = config,
+                        node = access.node,
+                        xrayConfig = access.xrayConfig,
                         splitTunnelApps = prefs.splitTunnelApps,
                         autoDisconnectApps = prefs.autoDisconnectApps,
-                        latencyMs = latencyMs
+                        latencyMs = -1L
                     )
                     message.value = null
                 },
                 onFailure = { err ->
-                    message.value = err.message ?: "Could not load xray config"
+                    message.value = err.message ?: "Unable to load VPN access"
                 }
             )
             busy.value = false

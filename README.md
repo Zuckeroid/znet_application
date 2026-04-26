@@ -5,8 +5,8 @@ MVP Android client for znet with:
 - VPN UI inspired by the provided home screen
 - Split tunneling (exclude selected apps from VPN)
 - Auto-off VPN when selected app is foreground
-- Adaptive node selection (latency/health probe)
-- Telemetry upload to orchestrator via WorkManager
+- Access bundle from billing `Appbridge`
+- Telemetry placeholder for future `Appbridge` transport
 
 ## Stack
 - Kotlin
@@ -17,9 +17,9 @@ MVP Android client for znet with:
 
 ## Project structure
 - `app/src/main/java/com/znet/app/vpn` - VPN service, Xray runner, connection status bus
-- `app/src/main/java/com/znet/app/data` - preferences, models, orchestrator client, adaptive selector
+- `app/src/main/java/com/znet/app/data` - preferences, models, app bridge client, config builders
 - `app/src/main/java/com/znet/app/ui` - Compose UI (Home/Servers/Settings)
-- `app/src/main/java/com/znet/app/workers` - periodic telemetry worker
+- `app/src/main/java/com/znet/app/workers` - telemetry placeholder for future v2
 
 ## Required setup
 1. Put your xray binary at:
@@ -30,11 +30,10 @@ MVP Android client for znet with:
    - or in `gradle.properties`: `ZNET_AUTH_API_URL=https://your-api.example.com`
 4. In app, user enters only token (no URL field in UI).
 
-## Orchestrator API expected
-- `POST /api/v1/mobile/token-auth` (or fallback `GET` with `token` and `deviceId`)
-- `GET /api/v1/mobile/nodes`
-- `GET /api/v1/mobile/xray-config?nodeId=<id>&deviceId=<id>`
-- `POST /api/v1/mobile/telemetry`
+## Billing API expected
+- `POST /api/guest/appbridge/token_login`
+
+The app now treats billing as the only external API surface. The orchestrator remains an internal backend layer behind billing.
 
 ## Important note on core integration
 This MVP starts Xray process and exposes TUN file descriptor through `XRAY_TUN_FD` env var.

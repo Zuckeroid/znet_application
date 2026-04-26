@@ -20,7 +20,6 @@ class VpnRepository(
     private val context: Context,
     private val preferencesRepository: UserPreferencesRepository,
     private val orchestratorClient: OrchestratorClient,
-    private val adaptiveNodeSelector: AdaptiveNodeSelector,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
     fun resolveManualVlessLink(link: String): Result<ResolvedNodeAccess> {
@@ -69,7 +68,6 @@ class VpnRepository(
             require(cleanToken.length == REQUIRED_TOKEN_LENGTH) { INVALID_TOKEN_MESSAGE }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
-            val deviceId = ensureDeviceId()
             val access = orchestratorClient.resolveTokenAccess(
                 baseUrl = authBaseUrl,
                 token = cleanToken
@@ -78,31 +76,31 @@ class VpnRepository(
             finalizeAuthentication(
                 access = access,
                 authBaseUrl = authBaseUrl,
-                fallbackToken = cleanToken,
-                deviceId = deviceId
+                fallbackToken = cleanToken
             )
         }
     }
 
-    suspend fun fetchNodes(): Result<List<ServerNode>> {
-        val prefs = preferencesRepository.preferences.first()
-        return orchestratorClient.fetchNodes(prefs.orchestratorBaseUrl, prefs.authToken)
-    }
+    suspend fun refreshAccessBundle(): Result<ResolvedNodeAccess> {
+        return runCatching {
+            val prefs = preferencesRepository.preferences.first()
+            val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
+            val sessionToken = prefs.authToken.trim()
 
-    suspend fun chooseNode(nodes: List<ServerNode>): Pair<ServerNode, Long> {
-        val prefs = preferencesRepository.preferences.first()
-        return adaptiveNodeSelector.chooseNode(nodes, prefs.adaptiveEnabled)
-    }
+            require(sessionToken.isNotBlank()) { "токен не найден" }
+            require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
-    suspend fun fetchXrayConfig(nodeId: String): Result<String> {
-        val prefs = preferencesRepository.preferences.first()
-        val deviceId = ensureDeviceId()
-        return orchestratorClient.fetchXrayConfig(
-            baseUrl = prefs.orchestratorBaseUrl,
-            token = prefs.authToken,
-            nodeId = nodeId,
-            deviceId = deviceId
-        )
+            val access = orchestratorClient.resolveTokenAccess(
+                baseUrl = authBaseUrl,
+                token = sessionToken
+            ).getOrThrow()
+
+            finalizeAuthentication(
+                access = access,
+                authBaseUrl = authBaseUrl,
+                fallbackToken = sessionToken
+            )
+        }
     }
 
     suspend fun loadInstalledApps(): List<InstalledApp> = withContext(Dispatchers.Default) {
@@ -149,26 +147,17 @@ class VpnRepository(
         context.startService(intent)
     }
 
-    private suspend fun ensureDeviceId(): String {
-        return preferencesRepository.getOrCreateDeviceId()
-    }
-
     private suspend fun finalizeAuthentication(
         access: TokenAccessResponse,
         authBaseUrl: String,
-        fallbackToken: String,
-        deviceId: String
+        fallbackToken: String
     ): ResolvedNodeAccess {
-        val resolvedBaseUrl = access.orchestratorBaseUrl
-            ?.trimEnd('/')
-            ?.takeIf { it.isNotBlank() }
-            ?: authBaseUrl
         val sessionToken = access.issuedToken
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: fallbackToken
 
-        preferencesRepository.setOrchestrator(resolvedBaseUrl, sessionToken)
+        preferencesRepository.setOrchestrator(authBaseUrl, sessionToken)
         preferencesRepository.setTokenAuthMetadata(
             deviceToken = access.deviceToken,
             hasActiveAccess = access.hasActiveAccess,
@@ -177,35 +166,12 @@ class VpnRepository(
             selectedSubscriptionLink = access.selectedSubscriptionLink
         )
         return resolveNodeAccess(
-            access = access,
-            baseUrl = resolvedBaseUrl,
-            token = sessionToken,
-            deviceId = deviceId
+            access = access
         )
     }
 
-    private suspend fun resolveNodeAccess(
-        access: TokenAccessResponse,
-        baseUrl: String,
-        token: String,
-        deviceId: String
-    ): ResolvedNodeAccess {
-        val nodeId = access.nodeId?.takeIf { it.isNotBlank() }
-        if (nodeId != null && token.isNotBlank()) {
-            val configResult = orchestratorClient.fetchXrayConfig(
-                baseUrl = baseUrl,
-                token = token,
-                nodeId = nodeId,
-                deviceId = deviceId
-            )
-            val xrayConfig = configResult.getOrNull()
-            if (!xrayConfig.isNullOrBlank()) {
-                return NodeLinkConfigFactory.fromTokenAccess(
-                    access.copy(xrayConfig = xrayConfig)
-                )
-            }
-        }
-
+    private fun resolveNodeAccess(access: TokenAccessResponse): ResolvedNodeAccess {
+        require(access.connectionReady != false) { "доступ еще не готов" }
         return NodeLinkConfigFactory.fromTokenAccess(access)
     }
 

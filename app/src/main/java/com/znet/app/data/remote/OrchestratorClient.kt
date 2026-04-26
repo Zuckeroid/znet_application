@@ -1,7 +1,5 @@
-﻿package com.znet.app.data.remote
+package com.znet.app.data.remote
 
-import com.znet.app.data.model.ServerNode
-import com.znet.app.data.model.TelemetryPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -29,23 +27,6 @@ class OrchestratorClient(
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
-    suspend fun fetchNodes(baseUrl: String, token: String): Result<List<ServerNode>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val url = "${baseUrl.trimEnd('/')}/api/v1/mobile/nodes".toHttpUrl()
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .applyAuth(token)
-                .build()
-            client.newCall(request).execute().use { response ->
-                require(response.isSuccessful) { "Nodes request failed: ${response.code}" }
-                val raw = response.body?.string().orEmpty()
-                val payload = json.decodeFromString<NodesResponse>(raw)
-                payload.nodes
-            }
-        }
-    }
-
     suspend fun resolveTokenAccess(
         baseUrl: String,
         token: String
@@ -62,57 +43,11 @@ class OrchestratorClient(
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val normalizedBase = baseUrl.trimEnd('/')
-            require(normalizedBase.isNotBlank()) { "Orchestrator URL is empty" }
+            require(normalizedBase.isNotBlank()) { "Billing API URL is empty" }
             require(token.isNotBlank()) { "Token is empty" }
 
             val endpoint = "$normalizedBase$TOKEN_AUTH_PATH".toHttpUrl()
             executeTokenAuthRequest(endpoint, token.trim())
-        }
-    }
-
-    suspend fun fetchXrayConfig(
-        baseUrl: String,
-        token: String,
-        nodeId: String,
-        deviceId: String
-    ): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val url = "${baseUrl.trimEnd('/')}/api/v1/mobile/xray-config"
-                .toHttpUrl()
-                .newBuilder()
-                .addQueryParameter("nodeId", nodeId)
-                .addQueryParameter("deviceId", deviceId)
-                .build()
-            val request = Request.Builder()
-                .url(url)
-                .get()
-                .applyAuth(token)
-                .build()
-            client.newCall(request).execute().use { response ->
-                require(response.isSuccessful) { "Config request failed: ${response.code}" }
-                val raw = response.body?.string().orEmpty()
-                json.decodeFromString<XrayConfigResponse>(raw).config
-            }
-        }
-    }
-
-    suspend fun postTelemetry(
-        baseUrl: String,
-        token: String,
-        payload: TelemetryPayload
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val url = "${baseUrl.trimEnd('/')}/api/v1/mobile/telemetry".toHttpUrl()
-            val body = json.encodeToString(TelemetryPayload.serializer(), payload)
-                .toRequestBody("application/json".toMediaType())
-            val request = Request.Builder()
-                .url(url)
-                .post(body)
-                .applyAuth(token)
-                .build()
-            client.newCall(request).execute().use { response ->
-                require(response.isSuccessful) { "Telemetry request failed: ${response.code}" }
-            }
         }
     }
 
@@ -140,28 +75,55 @@ class OrchestratorClient(
         require(rawBody.isNotBlank()) { "Token auth response is empty" }
         val root = json.parseToJsonElement(rawBody).jsonObject
         val payload = unwrapPayload(root)
-        val deviceToken = payload.objectOrNull("app")?.stringOrNull("token", "device_token", "deviceToken")
-            ?: root.objectOrNull("result")?.objectOrNull("app")?.stringOrNull("token", "device_token", "deviceToken")
-            ?: root.objectOrNull("app")?.stringOrNull("token", "device_token", "deviceToken")
-        val hasActiveAccess = payload.booleanOrNull("has_active_access", "hasActiveAccess")
-            ?: root.objectOrNull("result")?.booleanOrNull("has_active_access", "hasActiveAccess")
+        val result = root.objectOrNull("result")
+        val app = payload.objectOrNull("app") ?: result?.objectOrNull("app") ?: root.objectOrNull("app")
+        val access = payload.objectOrNull("access") ?: result?.objectOrNull("access") ?: root.objectOrNull("access")
+        val connection = payload.objectOrNull("connection") ?: result?.objectOrNull("connection") ?: root.objectOrNull("connection")
+        val service = payload.objectOrNull("service") ?: result?.objectOrNull("service") ?: root.objectOrNull("service")
+
+        val deviceToken = app?.stringOrNull("token", "device_token", "deviceToken")
+        val hasActiveAccess = access?.booleanOrNull("has_active_access", "hasActiveAccess")
+            ?: payload.booleanOrNull("has_active_access", "hasActiveAccess")
+            ?: result?.booleanOrNull("has_active_access", "hasActiveAccess")
             ?: root.booleanOrNull("has_active_access", "hasActiveAccess")
+
+        val connectionLinks = buildList {
+            addAll(connection?.extractLinksFromElement("links", "active_subscription_links", "activeSubscriptionLinks").orEmpty())
+            connection?.stringOrNull("link", "subscription_link", "subscriptionLink", "url")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::add)
+        }
+
         val activeSubscriptionLinks = (
-            payload.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks") +
-                (root.objectOrNull("result")?.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks")
-                    ?: emptyList()) +
+            connectionLinks +
+                payload.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks") +
+                (result?.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks") ?: emptyList()) +
                 root.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks")
             )
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
             .distinct()
+
         val filteredSubscriptionLinks = (
             payload.filteredSubscriptionLinks() +
-                (root.objectOrNull("result")?.filteredSubscriptionLinks() ?: emptyList()) +
+                (result?.filteredSubscriptionLinks() ?: emptyList()) +
                 root.filteredSubscriptionLinks()
             )
             .distinct()
-        val selectedSubscriptionLink = filteredSubscriptionLinks.firstOrNull() ?: activeSubscriptionLinks.firstOrNull()
 
-        val link = payload.stringOrNull(
+        val selectedSubscriptionLink = connection?.stringOrNull(
+            "link",
+            "subscription_link",
+            "subscriptionLink",
+            "url"
+        ) ?: filteredSubscriptionLinks.firstOrNull() ?: activeSubscriptionLinks.firstOrNull()
+
+        val link = connection?.stringOrNull(
+            "link",
+            "subscription_link",
+            "subscriptionLink",
+            "url"
+        ) ?: payload.stringOrNull(
             "nodeLink",
             "node_link",
             "link",
@@ -170,6 +132,11 @@ class OrchestratorClient(
             "node_url",
             "connectionUrl",
             "connection_url"
+        ) ?: result?.stringOrNull(
+            "nodeLink",
+            "node_link",
+            "link",
+            "url"
         ) ?: root.stringOrNull(
             "nodeLink",
             "node_link",
@@ -177,7 +144,15 @@ class OrchestratorClient(
             "url"
         ) ?: selectedSubscriptionLink
 
-        val xrayConfig = payload.stringOrNull(
+        val xrayConfig = connection?.stringOrNull(
+            "xray_config",
+            "xrayConfig",
+            "config"
+        ) ?: payload.stringOrNull(
+            "xrayConfig",
+            "xray_config",
+            "config"
+        ) ?: result?.stringOrNull(
             "xrayConfig",
             "xray_config",
             "config"
@@ -187,6 +162,7 @@ class OrchestratorClient(
             "config"
         )
 
+        require(hasActiveAccess != false) { "Token has no active VPN access" }
         require(!link.isNullOrBlank() || !xrayConfig.isNullOrBlank()) {
             "Token auth response has no node link or xray config"
         }
@@ -194,12 +170,28 @@ class OrchestratorClient(
         return TokenAccessResponse(
             nodeLink = link,
             xrayConfig = xrayConfig,
-            nodeId = payload.stringOrNull("nodeId", "node_id") ?: root.stringOrNull("nodeId", "node_id"),
-            nodeName = payload.stringOrNull("nodeName", "node_name", "name") ?: root.stringOrNull("nodeName", "node_name", "name"),
-            country = payload.stringOrNull("country") ?: root.stringOrNull("country"),
-            city = payload.stringOrNull("city") ?: root.stringOrNull("city"),
-            flagEmoji = payload.stringOrNull("flagEmoji", "flag_emoji") ?: root.stringOrNull("flagEmoji", "flag_emoji"),
+            nodeId = payload.stringOrNull("nodeId", "node_id")
+                ?: result?.stringOrNull("nodeId", "node_id")
+                ?: root.stringOrNull("nodeId", "node_id"),
+            nodeName = payload.stringOrNull("nodeName", "node_name", "name")
+                ?: result?.stringOrNull("nodeName", "node_name", "name")
+                ?: root.stringOrNull("nodeName", "node_name", "name"),
+            country = payload.stringOrNull("country")
+                ?: result?.stringOrNull("country")
+                ?: root.stringOrNull("country"),
+            city = payload.stringOrNull("city")
+                ?: result?.stringOrNull("city")
+                ?: root.stringOrNull("city"),
+            flagEmoji = payload.stringOrNull("flagEmoji", "flag_emoji")
+                ?: result?.stringOrNull("flagEmoji", "flag_emoji")
+                ?: root.stringOrNull("flagEmoji", "flag_emoji"),
             issuedToken = payload.stringOrNull(
+                "token",
+                "authToken",
+                "auth_token",
+                "accessToken",
+                "access_token"
+            ) ?: result?.stringOrNull(
                 "token",
                 "authToken",
                 "auth_token",
@@ -219,6 +211,13 @@ class OrchestratorClient(
                 "orchestrator_base_url",
                 "baseUrl",
                 "base_url"
+            ) ?: result?.stringOrNull(
+                "orchestratorUrl",
+                "orchestrator_url",
+                "orchestratorBaseUrl",
+                "orchestrator_base_url",
+                "baseUrl",
+                "base_url"
             ) ?: root.stringOrNull(
                 "orchestratorUrl",
                 "orchestrator_url",
@@ -231,7 +230,15 @@ class OrchestratorClient(
             hasActiveAccess = hasActiveAccess,
             activeSubscriptionLinks = activeSubscriptionLinks,
             filteredSubscriptionLinks = filteredSubscriptionLinks,
-            selectedSubscriptionLink = selectedSubscriptionLink
+            selectedSubscriptionLink = selectedSubscriptionLink,
+            contractVersion = payload.stringOrNull("contract_version", "contractVersion")
+                ?: result?.stringOrNull("contract_version", "contractVersion")
+                ?: root.stringOrNull("contract_version", "contractVersion"),
+            connectionReady = connection?.booleanOrNull("ready"),
+            connectionType = connection?.stringOrNull("type"),
+            connectionRevision = connection?.stringOrNull("revision"),
+            serviceOrderId = service?.stringOrNull("order_id", "orderId"),
+            serviceTitle = service?.stringOrNull("title", "name")
         )
     }
 
@@ -336,28 +343,10 @@ class OrchestratorClient(
     private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
     private fun JsonObject.objectOrNull(key: String): JsonObject? = this[key].asObjectOrNull()
 
-    private fun Request.Builder.applyAuth(token: String): Request.Builder {
-        return if (token.isBlank()) {
-            this
-        } else {
-            header("Authorization", "Bearer $token")
-        }
-    }
-
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
     }
 }
-
-@Serializable
-private data class NodesResponse(
-    val nodes: List<ServerNode>
-)
-
-@Serializable
-private data class XrayConfigResponse(
-    val config: String
-)
 
 @Serializable
 private data class TokenAuthRequest(
@@ -379,5 +368,11 @@ data class TokenAccessResponse(
     val hasActiveAccess: Boolean? = null,
     val activeSubscriptionLinks: List<String> = emptyList(),
     val filteredSubscriptionLinks: List<String> = emptyList(),
-    val selectedSubscriptionLink: String? = null
+    val selectedSubscriptionLink: String? = null,
+    val contractVersion: String? = null,
+    val connectionReady: Boolean? = null,
+    val connectionType: String? = null,
+    val connectionRevision: String? = null,
+    val serviceOrderId: String? = null,
+    val serviceTitle: String? = null
 )
