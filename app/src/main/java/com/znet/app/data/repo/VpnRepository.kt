@@ -85,7 +85,7 @@ class VpnRepository(
         return runCatching {
             val prefs = preferencesRepository.preferences.first()
             val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
-            val sessionToken = prefs.authToken.trim()
+            val sessionToken = prefs.authToken.trim().ifBlank { prefs.deviceToken.trim() }
 
             require(sessionToken.isNotBlank()) { "токен не найден" }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
@@ -152,7 +152,10 @@ class VpnRepository(
         authBaseUrl: String,
         fallbackToken: String
     ): ResolvedNodeAccess {
-        val sessionToken = access.issuedToken
+        val sessionToken = access.deviceToken
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: access.issuedToken
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: fallbackToken

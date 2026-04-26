@@ -141,7 +141,7 @@ class MainViewModel(
         loadInstalledApps()
         viewModelScope.launch {
             val prefs = preferencesRepository.preferences.first()
-            authTokenInput.value = prefs.authToken
+            authTokenInput.value = prefs.authToken.ifBlank { prefs.deviceToken }
         }
     }
 
