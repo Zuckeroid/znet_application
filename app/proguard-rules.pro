@@ -1,0 +1,3 @@
+﻿-keep class kotlinx.serialization.** { *; }
+-keep class com.znet.app.data.model.** { *; }
+-dontwarn kotlinx.serialization.**

@@ -1,0 +1,294 @@
+﻿package com.znet.app.vpn
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.znet.app.MainActivity
+import com.znet.app.R
+import com.znet.app.data.model.ConnectionState
+import com.znet.app.data.model.ServerNode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import android.app.usage.UsageStatsManager
+import android.net.TrafficStats
+
+class ZnetVpnService : VpnService() {
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val xrayEngine by lazy { ProcessXrayEngine(this) }
+    private val json by lazy { Json { ignoreUnknownKeys = true } }
+
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var statsJobActive = false
+    private var monitorJobActive = false
+    private var splitTunnelApps: Set<String> = emptySet()
+    private var autoDisconnectApps: Set<String> = emptySet()
+    private var startRxBytes: Long = 0L
+    private var startTxBytes: Long = 0L
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_CONNECT -> {
+                val nodeJson = intent.getStringExtra(EXTRA_NODE).orEmpty()
+                val xrayConfig = intent.getStringExtra(EXTRA_XRAY_CONFIG).orEmpty()
+                val splitApps = intent.getStringArrayExtra(EXTRA_SPLIT_TUNNEL_APPS)?.toSet().orEmpty()
+                val autoApps = intent.getStringArrayExtra(EXTRA_AUTO_DISCONNECT_APPS)?.toSet().orEmpty()
+                val latency = intent.getLongExtra(EXTRA_LATENCY_MS, -1L)
+
+                if (nodeJson.isBlank() || xrayConfig.isBlank()) {
+                    VpnStatusBus.update {
+                        it.copy(
+                            state = ConnectionState.ERROR,
+                            errorMessage = "Missing node or xray config"
+                        )
+                    }
+                    return START_NOT_STICKY
+                }
+
+                val node = runCatching { json.decodeFromString<ServerNode>(nodeJson) }
+                    .getOrElse { parseError ->
+                        VpnStatusBus.update {
+                            it.copy(
+                                state = ConnectionState.ERROR,
+                                errorMessage = parseError.message ?: "Node parse error"
+                            )
+                        }
+                        return START_NOT_STICKY
+                    }
+
+                serviceScope.launch {
+                    connect(node, xrayConfig, splitApps, autoApps, latency)
+                }
+            }
+
+            ACTION_DISCONNECT -> {
+                serviceScope.launch {
+                    disconnect(ConnectionState.DISCONNECTED, null)
+                    stopSelf()
+                }
+            }
+        }
+
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        runBlocking {
+            disconnect(ConnectionState.DISCONNECTED, null)
+        }
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private suspend fun connect(
+        node: ServerNode,
+        xrayConfig: String,
+        splitApps: Set<String>,
+        autoApps: Set<String>,
+        latencyMs: Long
+    ) {
+        runCatching {
+            VpnStatusBus.update {
+                it.copy(
+                    state = ConnectionState.CONNECTING,
+                    currentNode = node,
+                    latencyMs = latencyMs,
+                    errorMessage = null
+                )
+            }
+            startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
+
+            splitTunnelApps = splitApps
+            autoDisconnectApps = autoApps
+            establishTun(splitTunnelApps)
+            xrayEngine.ensureReady()
+            xrayEngine.start(xrayConfig, vpnInterface?.fd)
+
+            startRxBytes = TrafficStats.getTotalRxBytes()
+            startTxBytes = TrafficStats.getTotalTxBytes()
+
+            startStatsLoop(node, latencyMs)
+            startAppMonitor()
+
+            VpnStatusBus.update {
+                it.copy(
+                    state = ConnectionState.CONNECTED,
+                    currentNode = node,
+                    latencyMs = latencyMs,
+                    errorMessage = null
+                )
+            }
+            updateNotification("Connected: ${node.country}, ${node.city}")
+        }.onFailure { error ->
+            Log.e(TAG, "connect failed", error)
+            VpnStatusBus.update {
+                it.copy(
+                    state = ConnectionState.ERROR,
+                    currentNode = node,
+                    errorMessage = error.message ?: "Connection failed"
+                )
+            }
+            disconnect(ConnectionState.ERROR, error.message)
+            stopSelf()
+        }
+    }
+
+    private fun establishTun(disallowedApps: Set<String>) {
+        vpnInterface?.close()
+
+        val builder = Builder()
+            .setSession("znet")
+            .setMtu(1500)
+            .addAddress("10.200.0.2", 24)
+            .addRoute("0.0.0.0", 0)
+            .addDnsServer("1.1.1.1")
+            .addDnsServer("8.8.8.8")
+
+        disallowedApps.forEach { packageName ->
+            runCatching {
+                builder.addDisallowedApplication(packageName)
+            }
+        }
+
+        vpnInterface = builder.establish() ?: error("Failed to establish TUN interface")
+    }
+
+    private suspend fun disconnect(state: ConnectionState, message: String?) {
+        statsJobActive = false
+        monitorJobActive = false
+
+        runCatching {
+            xrayEngine.stop()
+        }
+        runCatching {
+            vpnInterface?.close()
+            vpnInterface = null
+        }
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        VpnStatusBus.update {
+            it.copy(
+                state = state,
+                errorMessage = message,
+                currentNode = if (state == ConnectionState.DISCONNECTED) null else it.currentNode,
+                rxBytes = if (state == ConnectionState.DISCONNECTED) 0 else it.rxBytes,
+                txBytes = if (state == ConnectionState.DISCONNECTED) 0 else it.txBytes
+            )
+        }
+    }
+
+    private fun startStatsLoop(node: ServerNode, latency: Long) {
+        if (statsJobActive) return
+        statsJobActive = true
+        serviceScope.launch {
+            while (isActive && statsJobActive) {
+                val rx = (TrafficStats.getTotalRxBytes() - startRxBytes).coerceAtLeast(0L)
+                val tx = (TrafficStats.getTotalTxBytes() - startTxBytes).coerceAtLeast(0L)
+                VpnStatusBus.update {
+                    it.copy(
+                        state = ConnectionState.CONNECTED,
+                        currentNode = node,
+                        latencyMs = latency,
+                        rxBytes = rx,
+                        txBytes = tx
+                    )
+                }
+                delay(2_000)
+            }
+        }
+    }
+
+    private fun startAppMonitor() {
+        if (monitorJobActive || autoDisconnectApps.isEmpty()) return
+        monitorJobActive = true
+
+        serviceScope.launch {
+            while (isActive && monitorJobActive) {
+                val foregroundPackage = resolveForegroundPackage()
+                if (!foregroundPackage.isNullOrBlank() && autoDisconnectApps.contains(foregroundPackage)) {
+                    disconnect(
+                        state = ConnectionState.PAUSED_BY_RULE,
+                        message = "VPN paused for $foregroundPackage"
+                    )
+                    stopSelf()
+                    return@launch
+                }
+                delay(1_500)
+            }
+        }
+    }
+
+    private fun resolveForegroundPackage(): String? {
+        val manager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val end = System.currentTimeMillis()
+        val start = end - 10_000
+        val usage = manager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
+        return usage.maxByOrNull { it.lastTimeUsed }?.packageName
+    }
+
+    private fun buildNotification(content: String): Notification {
+        createNotificationChannel()
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.vpn_notification_title))
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun updateNotification(content: String) {
+        val notification = buildNotification(content)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.vpn_notification_channel),
+            NotificationManager.IMPORTANCE_LOW
+        )
+        manager.createNotificationChannel(channel)
+    }
+
+    companion object {
+        private const val TAG = "ZnetVpnService"
+        private const val CHANNEL_ID = "znet_vpn_channel"
+        private const val NOTIFICATION_ID = 7_001
+
+        const val ACTION_CONNECT = "com.znet.app.action.CONNECT"
+        const val ACTION_DISCONNECT = "com.znet.app.action.DISCONNECT"
+
+        const val EXTRA_NODE = "extra_node"
+        const val EXTRA_XRAY_CONFIG = "extra_xray_config"
+        const val EXTRA_SPLIT_TUNNEL_APPS = "extra_split_tunnel_apps"
+        const val EXTRA_AUTO_DISCONNECT_APPS = "extra_auto_disconnect_apps"
+        const val EXTRA_LATENCY_MS = "extra_latency_ms"
+    }
+}

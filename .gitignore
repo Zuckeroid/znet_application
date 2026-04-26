@@ -1,0 +1,29 @@
+# Android / Gradle local state
+.gradle/
+.android-sdk/
+.toolchain/
+local.properties
+
+# Build outputs
+build/
+app/build/
+*/build/
+
+# Logs
+*.log
+build_run.log
+deps.log
+app/window_dump*.xml
+
+# IDE / OS noise
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Keystores and local secrets
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+secrets.properties
