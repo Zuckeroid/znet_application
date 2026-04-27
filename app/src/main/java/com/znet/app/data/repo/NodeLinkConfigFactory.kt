@@ -14,7 +14,11 @@ import java.util.Base64
 
 data class ResolvedNodeAccess(
     val node: ServerNode,
-    val xrayConfig: String
+    val xrayConfig: String,
+    val protocol: String? = null,
+    val serviceTitle: String? = null,
+    val serviceExpiresAt: String? = null,
+    val serviceDaysRemaining: Int? = null
 )
 
 object NodeLinkConfigFactory {
@@ -24,7 +28,11 @@ object NodeLinkConfigFactory {
             val endpoint = access.nodeLink?.let { parseEndpoint(it) }
             return ResolvedNodeAccess(
                 node = buildNode(access, endpoint),
-                xrayConfig = inlineConfig
+                xrayConfig = inlineConfig,
+                protocol = access.connectionProtocol,
+                serviceTitle = access.serviceTitle,
+                serviceExpiresAt = access.serviceExpiresAt,
+                serviceDaysRemaining = access.serviceDaysRemaining
             )
         }
 
@@ -35,7 +43,11 @@ object NodeLinkConfigFactory {
         val wrappedConfig = buildXrayConfig(parsed.outbound)
         return ResolvedNodeAccess(
             node = buildNode(access, parsed.endpoint),
-            xrayConfig = wrappedConfig
+            xrayConfig = wrappedConfig,
+            protocol = access.connectionProtocol,
+            serviceTitle = access.serviceTitle,
+            serviceExpiresAt = access.serviceExpiresAt,
+            serviceDaysRemaining = access.serviceDaysRemaining
         )
     }
 
@@ -472,10 +484,37 @@ object NodeLinkConfigFactory {
                 ?: "Znet node",
             country = access.country?.takeIf { it.isNotBlank() } ?: "Auto",
             city = access.city?.takeIf { it.isNotBlank() } ?: host,
-            flagEmoji = access.flagEmoji?.takeIf { it.isNotBlank() } ?: "GL",
+            flagEmoji = normalizeFlagEmoji(
+                rawFlag = access.flagEmoji,
+                fallbackCountry = access.country
+            ),
             host = host,
             port = port
         )
+    }
+
+    private fun normalizeFlagEmoji(
+        rawFlag: String?,
+        fallbackCountry: String?
+    ): String {
+        val normalizedFlag = rawFlag?.trim().orEmpty()
+        if (normalizedFlag.isNotBlank() && normalizedFlag.codePoints().count() > 1L && !normalizedFlag.matches(Regex("^[A-Za-z]{2,3}$"))) {
+            return normalizedFlag
+        }
+
+        val countryCode = when {
+            normalizedFlag.matches(Regex("^[A-Za-z]{2}$")) -> normalizedFlag.uppercase()
+            !fallbackCountry.isNullOrBlank() && fallbackCountry.trim().matches(Regex("^[A-Za-z]{2}$")) -> fallbackCountry.trim().uppercase()
+            else -> null
+        }
+
+        if (countryCode == null) {
+            return "GL"
+        }
+
+        val first = Character.codePointAt(countryCode, 0) - 'A'.code + 0x1F1E6
+        val second = Character.codePointAt(countryCode, 1) - 'A'.code + 0x1F1E6
+        return String(Character.toChars(first)) + String(Character.toChars(second))
     }
 
     private data class ParsedLink(

@@ -38,6 +38,10 @@ data class MainUiState(
     val latencyMs: Long = -1,
     val rxBytes: Long = 0,
     val txBytes: Long = 0,
+    val protocol: String? = null,
+    val serviceTitle: String? = null,
+    val serviceExpiresAt: String? = null,
+    val serviceDaysRemaining: Int? = null,
     val isAuthenticated: Boolean = false,
     val authTokenInput: String = "",
     val authError: String? = null,
@@ -76,7 +80,8 @@ class MainViewModel(
         authTokenInput,
         authError,
         authInProgress,
-        pendingAutoConnect
+        pendingAutoConnect,
+        resolvedAccess
     ) { values ->
         val prefs = values[0] as UserPreferences
         val status = values[1] as VpnStatus
@@ -88,6 +93,7 @@ class MainViewModel(
         val currentAuthError = values[7] as String?
         val authorizing = values[8] as Boolean
         val shouldAutoConnect = values[9] as Boolean
+        val access = values[10] as ResolvedNodeAccess?
 
         val selectedNode = nodes.firstOrNull { it.id == prefs.selectedNodeId } ?: status.currentNode
         MainUiState(
@@ -102,6 +108,10 @@ class MainViewModel(
             latencyMs = status.latencyMs,
             rxBytes = status.rxBytes,
             txBytes = status.txBytes,
+            protocol = access?.protocol,
+            serviceTitle = access?.serviceTitle,
+            serviceExpiresAt = access?.serviceExpiresAt,
+            serviceDaysRemaining = access?.serviceDaysRemaining,
             isAuthenticated = authenticated,
             authTokenInput = tokenInput,
             authError = currentAuthError,

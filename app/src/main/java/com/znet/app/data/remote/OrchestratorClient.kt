@@ -276,9 +276,12 @@ class OrchestratorClient(
                 ?: root.stringOrNull("contract_version", "contractVersion"),
             connectionReady = connection?.booleanOrNull("ready"),
             connectionType = connection?.stringOrNull("type"),
+            connectionProtocol = connection?.stringOrNull("protocol"),
             connectionRevision = connection?.stringOrNull("revision", "config_revision", "configRevision"),
             serviceOrderId = service?.stringOrNull("order_id", "orderId"),
-            serviceTitle = service?.stringOrNull("title", "name")
+            serviceTitle = service?.stringOrNull("title", "name"),
+            serviceExpiresAt = service?.stringOrNull("expires_at", "expiresAt"),
+            serviceDaysRemaining = service?.intOrNull("days_remaining", "daysRemaining")
         )
     }
 
@@ -320,6 +323,14 @@ class OrchestratorClient(
                 "true", "1", "yes" -> return true
                 "false", "0", "no" -> return false
             }
+        }
+        return null
+    }
+
+    private fun JsonObject.intOrNull(vararg keys: String): Int? {
+        keys.forEach { key ->
+            val primitive = this[key] as? JsonPrimitive ?: return@forEach
+            primitive.contentOrNull?.trim()?.toIntOrNull()?.let { return it }
         }
         return null
     }
@@ -437,9 +448,12 @@ data class TokenAccessResponse(
     val contractVersion: String? = null,
     val connectionReady: Boolean? = null,
     val connectionType: String? = null,
+    val connectionProtocol: String? = null,
     val connectionRevision: String? = null,
     val serviceOrderId: String? = null,
-    val serviceTitle: String? = null
+    val serviceTitle: String? = null,
+    val serviceExpiresAt: String? = null,
+    val serviceDaysRemaining: Int? = null
 )
 
 open class TokenAuthException(message: String) : IllegalStateException(message)

@@ -567,13 +567,48 @@ private fun HomeScreen(
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
-                Text(text = "Трафик", color = Color(0xFF8EA2B2))
+                Text(text = "Подключение", color = Color(0xFF8EA2B2))
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(text = "RX: ${formatBytes(state.rxBytes)}", color = Color.White)
-                Text(text = "TX: ${formatBytes(state.txBytes)}", color = Color.White)
+                InfoRow(
+                    label = "Протокол",
+                    value = state.protocol?.uppercase().orEmpty().ifBlank { "не определен" }
+                )
+                InfoRow(
+                    label = "Подписка",
+                    value = state.serviceTitle.orEmpty().ifBlank { "не определена" }
+                )
+                InfoRow(
+                    label = "Осталось",
+                    value = formatDaysRemaining(state.serviceDaysRemaining, state.serviceExpiresAt)
+                )
             }
         }
     }
+}
+
+@Composable
+private fun InfoRow(
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = Color(0xFF90A4B5)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = value,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+    Spacer(modifier = Modifier.height(6.dp))
 }
 
 @Composable
@@ -769,16 +804,23 @@ private fun SettingsScreen(
     }
 }
 
-private fun formatBytes(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
-    val units = listOf("B", "KB", "MB", "GB")
-    var value = bytes.toDouble()
-    var unitIndex = 0
-    while (value > 1024 && unitIndex < units.lastIndex) {
-        value /= 1024
-        unitIndex++
+private fun formatDaysRemaining(
+    daysRemaining: Int?,
+    expiresAt: String?
+): String {
+    val suffix = when (daysRemaining) {
+        null -> null
+        1 -> "1 день"
+        in 2..4 -> "$daysRemaining дня"
+        else -> "$daysRemaining дней"
     }
-    return "%.1f %s".format(value, units[unitIndex])
+    val datePart = expiresAt?.substringBefore('T')?.takeIf { it.isNotBlank() }
+    return when {
+        suffix != null && datePart != null -> "$suffix, до $datePart"
+        suffix != null -> suffix
+        datePart != null -> "до $datePart"
+        else -> "неизвестно"
+    }
 }
 
 private const val AUTH_TOKEN_LENGTH = 32

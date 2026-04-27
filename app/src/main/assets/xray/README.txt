@@ -1,6 +1,6 @@
-﻿Place compiled xray core binary here with filename: xray
+﻿Xray core is bundled as a native library.
 
-Expected path inside APK assets:
-assets/xray/xray
+Expected path in the project:
+app/src/main/jniLibs/arm64-v8a/libxray.so
 
-The binary must be executable for Android ABI (arm64-v8a, armeabi-v7a, x86_64 if needed).
+Add more ABI folders only when we decide to support them explicitly.

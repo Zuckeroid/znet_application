@@ -8,30 +8,18 @@ import java.io.File
 class XrayBinaryInstaller(
     private val context: Context
 ) {
-    private val installDir = File(context.filesDir, "xray")
-    private val binaryFile = File(installDir, "xray")
+    private val binaryFile: File by lazy {
+        File(context.applicationInfo.nativeLibraryDir, "libxray.so")
+    }
 
     suspend fun installIfNeeded(): File = withContext(Dispatchers.IO) {
         if (binaryFile.exists()) {
-            binaryFile.setExecutable(true)
+            binaryFile.setReadable(true, false)
+            binaryFile.setExecutable(true, false)
             return@withContext binaryFile
         }
-
-        installDir.mkdirs()
-        runCatching {
-            context.assets.open("xray/xray").use { input ->
-                binaryFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-        }.getOrElse {
-            throw IllegalStateException(
-                "Xray binary is missing. Put xray core at app/src/main/assets/xray/xray",
-                it
-            )
-        }
-
-        binaryFile.setExecutable(true)
-        binaryFile
+        throw IllegalStateException(
+            "Xray binary is missing. Put xray core at app/src/main/jniLibs/arm64-v8a/libxray.so"
+        )
     }
 }
