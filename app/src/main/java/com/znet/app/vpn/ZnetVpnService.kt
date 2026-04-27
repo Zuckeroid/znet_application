@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.usage.UsageEvents
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
@@ -233,7 +234,28 @@ class ZnetVpnService : VpnService() {
     private fun resolveForegroundPackage(): String? {
         val manager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val end = System.currentTimeMillis()
-        val start = end - 10_000
+        val start = end - FOREGROUND_LOOKBACK_MS
+        val events = manager.queryEvents(start, end)
+        val event = UsageEvents.Event()
+        var foregroundPackage: String? = null
+        var foregroundAt = 0L
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            val isForegroundEvent =
+                event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+            if (isForegroundEvent && event.timeStamp >= foregroundAt) {
+                foregroundPackage = event.packageName
+                foregroundAt = event.timeStamp
+            }
+        }
+
+        if (!foregroundPackage.isNullOrBlank()) {
+            return foregroundPackage
+        }
+
         val usage = manager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
         return usage.maxByOrNull { it.lastTimeUsed }?.packageName
     }
@@ -278,6 +300,7 @@ class ZnetVpnService : VpnService() {
         private const val TAG = "ZnetVpnService"
         private const val CHANNEL_ID = "znet_vpn_channel"
         private const val NOTIFICATION_ID = 7_001
+        private const val FOREGROUND_LOOKBACK_MS = 10_000L
 
         const val ACTION_CONNECT = "com.znet.app.action.CONNECT"
         const val ACTION_DISCONNECT = "com.znet.app.action.DISCONNECT"

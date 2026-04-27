@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -76,7 +77,10 @@ class AppAutomationMonitorService : Service() {
     private suspend fun tick() {
         val prefs = container.preferencesRepository.preferences.first()
         val hasSession = prefs.deviceToken.trim().length == REQUIRED_TOKEN_LENGTH
-        val hasAutomation = prefs.autoConnectEnabled && prefs.autoConnectApps.isNotEmpty()
+        val autoConnectActive = prefs.autoConnectEnabled && prefs.autoConnectApps.isNotEmpty()
+        val autoDisconnectActive =
+            prefs.autoDisconnectEnabled && prefs.autoDisconnectApps.isNotEmpty()
+        val hasAutomation = autoConnectActive || autoDisconnectActive
 
         if (!hasSession || !hasAutomation) {
             stopSelf()
@@ -86,19 +90,20 @@ class AppAutomationMonitorService : Service() {
         val foregroundPackage = resolveForegroundPackage() ?: return
         if (foregroundPackage == packageName) return
 
-        val currentState = VpnStatusBus.status.value.state
-        if (prefs.autoDisconnectEnabled &&
-            prefs.autoDisconnectApps.contains(foregroundPackage) &&
-            (currentState == ConnectionState.CONNECTED || currentState == ConnectionState.CONNECTING)
+        if (autoDisconnectActive && prefs.autoDisconnectApps.contains(foregroundPackage)
         ) {
-            container.vpnRepository.stopVpn()
+            val currentState = VpnStatusBus.status.value.state
+            if (currentState == ConnectionState.CONNECTED || currentState == ConnectionState.CONNECTING) {
+                container.vpnRepository.stopVpn()
+            }
             return
         }
 
-        if (!prefs.autoConnectEnabled || !prefs.autoConnectApps.contains(foregroundPackage)) {
+        if (!autoConnectActive || !prefs.autoConnectApps.contains(foregroundPackage)) {
             return
         }
 
+        val currentState = VpnStatusBus.status.value.state
         if (currentState != ConnectionState.DISCONNECTED &&
             currentState != ConnectionState.ERROR &&
             currentState != ConnectionState.PAUSED_BY_RULE
@@ -169,6 +174,27 @@ class AppAutomationMonitorService : Service() {
         val manager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val end = System.currentTimeMillis()
         val start = end - FOREGROUND_LOOKBACK_MS
+        val events = manager.queryEvents(start, end)
+        val event = UsageEvents.Event()
+        var foregroundPackage: String? = null
+        var foregroundAt = 0L
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            val isForegroundEvent =
+                event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        event.eventType == UsageEvents.Event.ACTIVITY_RESUMED)
+            if (isForegroundEvent && event.timeStamp >= foregroundAt) {
+                foregroundPackage = event.packageName
+                foregroundAt = event.timeStamp
+            }
+        }
+
+        if (!foregroundPackage.isNullOrBlank()) {
+            return foregroundPackage
+        }
+
         val usage = manager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
         return usage.maxByOrNull { it.lastTimeUsed }?.packageName
     }

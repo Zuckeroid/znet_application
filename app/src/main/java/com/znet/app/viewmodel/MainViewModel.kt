@@ -80,6 +80,7 @@ class MainViewModel(
     private val pendingAutoConnect = MutableStateFlow(false)
     private val resolvedAccess = MutableStateFlow<ResolvedNodeAccess?>(null)
     private val sessionValidationInProgress = MutableStateFlow(false)
+    private var usageAccessPromptShown = false
 
     private val baseUiState = combine(
         preferencesRepository.preferences,
@@ -333,6 +334,7 @@ class MainViewModel(
                 if (!add(packageName)) remove(packageName)
             }
             preferencesRepository.setAutoDisconnectApps(updated)
+            syncAutomationMonitor()
         }
     }
 
@@ -352,6 +354,7 @@ class MainViewModel(
     fun setAutoDisconnectEnabled(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setAutoDisconnectEnabled(enabled)
+            syncAutomationMonitor()
         }
     }
 
@@ -614,14 +617,30 @@ class MainViewModel(
 
     private suspend fun syncAutomationMonitor() {
         val prefs = preferencesRepository.preferences.first()
+        val autoConnectActive =
+            prefs.autoConnectEnabled &&
+                prefs.autoConnectApps.isNotEmpty()
+        val autoDisconnectActive =
+            prefs.autoDisconnectEnabled &&
+                prefs.autoDisconnectApps.isNotEmpty()
         val shouldRun =
             prefs.deviceToken.trim().length == REQUIRED_TOKEN_LENGTH &&
-                prefs.autoConnectEnabled &&
-                prefs.autoConnectApps.isNotEmpty()
+                (autoConnectActive || autoDisconnectActive)
 
         if (shouldRun) {
+            if (!vpnRepository.hasUsageAccess()) {
+                vpnRepository.stopAutomationMonitor()
+                if (!usageAccessPromptShown) {
+                    message.value = "Для Auto ON/OFF нужен Usage Access"
+                    usageAccessPromptShown = true
+                }
+                return
+            }
+
+            usageAccessPromptShown = false
             vpnRepository.startAutomationMonitor()
         } else {
+            usageAccessPromptShown = false
             vpnRepository.stopAutomationMonitor()
         }
     }

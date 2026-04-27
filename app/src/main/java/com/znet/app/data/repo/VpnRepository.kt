@@ -1,9 +1,11 @@
 ﻿package com.znet.app.data.repo
 
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Build
+import android.os.Process
 import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
@@ -176,6 +178,26 @@ class VpnRepository(
             action = AppAutomationMonitorService.ACTION_STOP
         }
         context.startService(intent)
+    }
+
+    fun hasUsageAccess(): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName
+            )
+        }
+
+        return mode == AppOpsManager.MODE_ALLOWED
     }
 
     private suspend fun buildDeviceRegistrationData(): DeviceRegistrationData {
