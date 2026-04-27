@@ -41,6 +41,7 @@ data class MainUiState(
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null,
     val isAuthenticated: Boolean = false,
+    val sessionRestoreInProgress: Boolean = false,
     val authTokenInput: String = "",
     val authError: String? = null,
     val authInProgress: Boolean = false,
@@ -60,6 +61,7 @@ class MainViewModel(
     private val busy = MutableStateFlow(false)
     private val message = MutableStateFlow<String?>(null)
     private val isAuthenticated = MutableStateFlow(false)
+    private val sessionRestoreInProgress = MutableStateFlow(false)
 
     private val authTokenInput = MutableStateFlow("")
     private val authError = MutableStateFlow<String?>(null)
@@ -75,6 +77,7 @@ class MainViewModel(
         installedApps,
         busy,
         isAuthenticated,
+        sessionRestoreInProgress,
         authTokenInput,
         authError,
         authInProgress,
@@ -87,11 +90,12 @@ class MainViewModel(
         val apps = values[3] as List<InstalledApp>
         val isBusyValue = values[4] as Boolean
         val authenticated = values[5] as Boolean
-        val tokenInput = values[6] as String
-        val currentAuthError = values[7] as String?
-        val authorizing = values[8] as Boolean
-        val shouldAutoConnect = values[9] as Boolean
-        val access = values[10] as ResolvedNodeAccess?
+        val restoringSession = values[6] as Boolean
+        val tokenInput = values[7] as String
+        val currentAuthError = values[8] as String?
+        val authorizing = values[9] as Boolean
+        val shouldAutoConnect = values[10] as Boolean
+        val access = values[11] as ResolvedNodeAccess?
 
         val selectedNode = nodes.firstOrNull { it.id == prefs.selectedNodeId } ?: status.currentNode
         MainUiState(
@@ -109,6 +113,7 @@ class MainViewModel(
             serviceExpiresAt = access?.serviceExpiresAt,
             serviceDaysRemaining = access?.serviceDaysRemaining,
             isAuthenticated = authenticated,
+            sessionRestoreInProgress = restoringSession,
             authTokenInput = tokenInput,
             authError = currentAuthError,
             authInProgress = authorizing,
@@ -129,30 +134,8 @@ class MainViewModel(
     init {
         loadInstalledApps()
         viewModelScope.launch {
-            val prefs = preferencesRepository.preferences.first()
-            val persistedToken = prefs.deviceToken.ifBlank { prefs.authToken }
-            authTokenInput.value = persistedToken
-
-            if (persistedToken.length == REQUIRED_TOKEN_LENGTH) {
-                isAuthenticated.value = true
-                val restore = vpnRepository.refreshAccessBundle()
-                restore.fold(
-                    onSuccess = { access ->
-                        resolvedAccess.value = access
-                        loadedNodes.value = listOf(access.node)
-                        preferencesRepository.setSelectedNode(access.node.id)
-                        isAuthenticated.value = true
-                        authError.value = null
-                        message.value = null
-                    },
-                    onFailure = { error ->
-                        handleStartupRestoreFailure(
-                            persistedToken = persistedToken,
-                            error = error
-                        )
-                    }
-                )
-            }
+            preferencesRepository.migrateLegacySessionTokenIfNeeded()
+            restorePersistedSession()
         }
     }
 
@@ -166,10 +149,10 @@ class MainViewModel(
             val result = vpnRepository.refreshAccessBundle()
             result.fold(
                 onSuccess = { access ->
-                    resolvedAccess.value = access
-                    loadedNodes.value = listOf(access.node)
-                    preferencesRepository.setSelectedNode(access.node.id)
-                    message.value = null
+                    applyAuthenticatedAccess(
+                        access = access,
+                        autoConnect = false
+                    )
                 },
                 onFailure = { err ->
                     if (isInvalidSessionFailure(err)) {
@@ -200,6 +183,29 @@ class MainViewModel(
         }
     }
 
+    private suspend fun restorePersistedSession() {
+        val persistedToken = currentSessionToken()
+        if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {
+            authTokenInput.value = ""
+            return
+        }
+
+        sessionRestoreInProgress.value = true
+        val restore = vpnRepository.refreshAccessBundle()
+        restore.fold(
+            onSuccess = { access ->
+                applyAuthenticatedAccess(
+                    access = access,
+                    autoConnect = false
+                )
+            },
+            onFailure = { error ->
+                handleStartupRestoreFailure(error)
+            }
+        )
+        sessionRestoreInProgress.value = false
+    }
+
     private suspend fun submitTokenAuth() {
         val token = authTokenInput.value.trim()
         if (token.isBlank() || token.length != REQUIRED_TOKEN_LENGTH) {
@@ -213,85 +219,22 @@ class MainViewModel(
         val result = vpnRepository.authenticateWithToken(token = token)
         result.fold(
             onSuccess = { access ->
-                resolvedAccess.value = access
-                loadedNodes.value = listOf(access.node)
-                preferencesRepository.setSelectedNode(access.node.id)
-                isAuthenticated.value = true
-                pendingAutoConnect.value = true
-                authError.value = null
-                authTokenInput.value = currentSessionToken()
-                message.value = null
+                applyAuthenticatedAccess(
+                    access = access,
+                    autoConnect = true
+                )
+                authTokenInput.value = ""
             },
             onFailure = { error ->
-                val restored = tryRestoreSessionAfterExchange(
-                    consumedToken = token,
-                    initialError = error
-                )
-                if (!restored) {
-                    handleUnauthenticatedFailure(error)
-                }
+                handleAuthenticationFailure(error)
             }
         )
         authInProgress.value = false
     }
 
-    private suspend fun tryRestoreSessionAfterExchange(
-        consumedToken: String,
-        initialError: Throwable
-    ): Boolean {
-        val persistedToken = currentSessionToken()
-        if (
-            persistedToken.isBlank() ||
-            persistedToken == consumedToken ||
-            persistedToken.length != REQUIRED_TOKEN_LENGTH
-        ) {
-            return false
-        }
-
-        if (initialError is AccessNotReadyException) {
-            resolvedAccess.value = null
-            loadedNodes.value = emptyList()
-            isAuthenticated.value = true
-            pendingAutoConnect.value = false
-            authError.value = null
-            authTokenInput.value = persistedToken
-            message.value = initialError.message ?: ACCESS_NOT_READY_MESSAGE
-            return true
-        }
-
-        val restored = vpnRepository.refreshAccessBundle()
-        restored.fold(
-            onSuccess = { access ->
-                resolvedAccess.value = access
-                loadedNodes.value = listOf(access.node)
-                preferencesRepository.setSelectedNode(access.node.id)
-                isAuthenticated.value = true
-                pendingAutoConnect.value = true
-                authError.value = null
-                authTokenInput.value = persistedToken
-                message.value = null
-            },
-            onFailure = { error ->
-                if (isInvalidSessionFailure(error)) {
-                    invalidateSession(error)
-                } else {
-                    resolvedAccess.value = null
-                    loadedNodes.value = emptyList()
-                    isAuthenticated.value = true
-                    pendingAutoConnect.value = false
-                    authError.value = null
-                    authTokenInput.value = persistedToken
-                    message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
-                }
-            }
-        )
-
-        return restored.isSuccess || !isInvalidSessionFailure(restored.exceptionOrNull() ?: return false)
-    }
-
     private suspend fun currentSessionToken(): String {
         val prefs = preferencesRepository.preferences.first()
-        return prefs.deviceToken.ifBlank { prefs.authToken }.trim()
+        return prefs.deviceToken.trim()
     }
 
     fun consumeAutoConnectRequest() {
@@ -336,21 +279,19 @@ class MainViewModel(
     fun connect() {
         viewModelScope.launch {
             val prefs: UserPreferences = preferencesRepository.preferences.first()
-            if (!isAuthenticated.value) {
-                val persistedToken = prefs.deviceToken.ifBlank { prefs.authToken }
-                if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {
-                    message.value = "Sign in first"
-                    return@launch
-                }
+            if (!isAuthenticated.value && prefs.deviceToken.length != REQUIRED_TOKEN_LENGTH) {
+                message.value = "Sign in first"
+                return@launch
             }
 
             busy.value = true
             val accessResult = resolvedAccess.value?.let { Result.success(it) } ?: vpnRepository.refreshAccessBundle()
             accessResult.fold(
                 onSuccess = { access ->
-                    resolvedAccess.value = access
-                    loadedNodes.value = listOf(access.node)
-                    preferencesRepository.setSelectedNode(access.node.id)
+                    applyAuthenticatedAccess(
+                        access = access,
+                        autoConnect = false
+                    )
                     vpnRepository.startVpn(
                         node = access.node,
                         xrayConfig = access.xrayConfig,
@@ -395,7 +336,6 @@ class MainViewModel(
     }
 
     private suspend fun handleStartupRestoreFailure(
-        persistedToken: String,
         error: Throwable
     ) {
         if (isInvalidSessionFailure(error)) {
@@ -403,9 +343,38 @@ class MainViewModel(
             return
         }
 
+        enterAuthenticatedPendingState(error)
+    }
+
+    private suspend fun handleAuthenticationFailure(error: Throwable) {
+        val sessionToken = currentSessionToken()
+        if (error is AccessNotReadyException && sessionToken.length == REQUIRED_TOKEN_LENGTH) {
+            enterAuthenticatedPendingState(error)
+            authTokenInput.value = ""
+            return
+        }
+
+        handleUnauthenticatedFailure(error)
+    }
+
+    private suspend fun applyAuthenticatedAccess(
+        access: ResolvedNodeAccess,
+        autoConnect: Boolean
+    ) {
+        resolvedAccess.value = access
+        loadedNodes.value = listOf(access.node)
+        preferencesRepository.setSelectedNode(access.node.id)
+        isAuthenticated.value = true
+        pendingAutoConnect.value = autoConnect
+        authError.value = null
+        message.value = null
+    }
+
+    private fun enterAuthenticatedPendingState(error: Throwable) {
         resolvedAccess.value = null
         loadedNodes.value = emptyList()
-        isAuthenticated.value = persistedToken.length == REQUIRED_TOKEN_LENGTH
+        isAuthenticated.value = true
+        pendingAutoConnect.value = false
         authError.value = null
         message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
     }
@@ -427,6 +396,7 @@ class MainViewModel(
         resolvedAccess.value = null
         loadedNodes.value = emptyList()
         isAuthenticated.value = false
+        sessionRestoreInProgress.value = false
         pendingAutoConnect.value = false
         authError.value = error.message ?: INVALID_TOKEN_MESSAGE
         authTokenInput.value = ""
@@ -439,7 +409,7 @@ class MainViewModel(
 
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
-        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
-        const val ACCESS_NOT_READY_MESSAGE = "доступ еще не готов"
+        const val INVALID_TOKEN_MESSAGE = "Invalid token"
+        const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
     }
 }

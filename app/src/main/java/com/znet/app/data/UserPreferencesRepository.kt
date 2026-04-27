@@ -19,14 +19,7 @@ import java.io.IOException
 private val Context.userPrefsStore: DataStore<Preferences> by preferencesDataStore(name = "user_prefs")
 
 data class UserPreferences(
-    val orchestratorBaseUrl: String,
-    val authToken: String,
-    val manualVlessLink: String,
     val deviceToken: String,
-    val hasActiveAccess: String,
-    val activeSubscriptionLinks: String,
-    val filteredSubscriptionLinks: String,
-    val selectedSubscriptionLink: String,
     val deviceId: String,
     val selectedNodeId: String?,
     val splitTunnelApps: Set<String>,
@@ -38,6 +31,7 @@ class UserPreferencesRepository(
     private val context: Context
 ) {
     private object Keys {
+        // Legacy keys are kept only to migrate or wipe stale auth state from older app builds.
         val orchestratorBaseUrl = stringPreferencesKey("orchestrator_base_url")
         val authToken = stringPreferencesKey("auth_token")
         val manualVlessLink = stringPreferencesKey("manual_vless_link")
@@ -63,14 +57,7 @@ class UserPreferencesRepository(
         }
         .map { prefs ->
             UserPreferences(
-                orchestratorBaseUrl = prefs[Keys.orchestratorBaseUrl] ?: BuildConfig.AUTH_API_URL,
-                authToken = prefs[Keys.authToken] ?: "",
-                manualVlessLink = prefs[Keys.manualVlessLink] ?: "",
                 deviceToken = prefs[Keys.deviceToken] ?: "",
-                hasActiveAccess = prefs[Keys.hasActiveAccess] ?: "",
-                activeSubscriptionLinks = prefs[Keys.activeSubscriptionLinks] ?: "",
-                filteredSubscriptionLinks = prefs[Keys.filteredSubscriptionLinks] ?: "",
-                selectedSubscriptionLink = prefs[Keys.selectedSubscriptionLink] ?: "",
                 deviceId = prefs[Keys.deviceId] ?: "",
                 selectedNodeId = prefs[Keys.selectedNodeId]?.takeIf { it.isNotBlank() },
                 splitTunnelApps = prefs[Keys.splitTunnelApps] ?: emptySet(),
@@ -79,10 +66,22 @@ class UserPreferencesRepository(
             )
         }
 
-    suspend fun setOrchestrator(baseUrl: String, token: String) {
+    suspend fun migrateLegacySessionTokenIfNeeded() {
         context.userPrefsStore.edit { prefs ->
-            prefs[Keys.orchestratorBaseUrl] = baseUrl.trimEnd('/')
-            prefs[Keys.authToken] = token
+            val deviceToken = prefs[Keys.deviceToken]?.trim().orEmpty()
+            val legacyAuthToken = prefs[Keys.authToken]?.trim().orEmpty()
+            if (deviceToken.isBlank() && legacyAuthToken.length == REQUIRED_TOKEN_LENGTH) {
+                prefs[Keys.deviceToken] = legacyAuthToken
+            }
+
+            // Drop old session/link leftovers once the active device token has been restored.
+            prefs[Keys.orchestratorBaseUrl] = BuildConfig.AUTH_API_URL.trimEnd('/')
+            prefs[Keys.authToken] = ""
+            prefs[Keys.manualVlessLink] = ""
+            prefs[Keys.hasActiveAccess] = ""
+            prefs[Keys.activeSubscriptionLinks] = ""
+            prefs[Keys.filteredSubscriptionLinks] = ""
+            prefs[Keys.selectedSubscriptionLink] = ""
         }
     }
 
@@ -99,37 +98,16 @@ class UserPreferencesRepository(
         }
     }
 
-    suspend fun setAuthToken(token: String) {
+    suspend fun setDeviceSession(deviceToken: String) {
         context.userPrefsStore.edit { prefs ->
-            prefs[Keys.authToken] = token
-        }
-    }
-
-    suspend fun setManualVlessLink(link: String) {
-        context.userPrefsStore.edit { prefs ->
-            prefs[Keys.manualVlessLink] = link.trim()
-        }
-    }
-
-    suspend fun clearManualVlessLink() {
-        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.deviceToken] = deviceToken.trim()
+            prefs[Keys.orchestratorBaseUrl] = BuildConfig.AUTH_API_URL.trimEnd('/')
+            prefs[Keys.authToken] = ""
             prefs[Keys.manualVlessLink] = ""
-        }
-    }
-
-    suspend fun setTokenAuthMetadata(
-        deviceToken: String?,
-        hasActiveAccess: Boolean?,
-        activeSubscriptionLinks: List<String>,
-        filteredSubscriptionLinks: List<String>,
-        selectedSubscriptionLink: String?
-    ) {
-        context.userPrefsStore.edit { prefs ->
-            prefs[Keys.deviceToken] = deviceToken?.trim().orEmpty()
-            prefs[Keys.hasActiveAccess] = hasActiveAccess?.toString().orEmpty()
-            prefs[Keys.activeSubscriptionLinks] = normalizeLinkList(activeSubscriptionLinks)
-            prefs[Keys.filteredSubscriptionLinks] = normalizeLinkList(filteredSubscriptionLinks)
-            prefs[Keys.selectedSubscriptionLink] = selectedSubscriptionLink?.trim().orEmpty()
+            prefs[Keys.hasActiveAccess] = ""
+            prefs[Keys.activeSubscriptionLinks] = ""
+            prefs[Keys.filteredSubscriptionLinks] = ""
+            prefs[Keys.selectedSubscriptionLink] = ""
         }
     }
 
@@ -169,12 +147,7 @@ class UserPreferencesRepository(
         return generated
     }
 
-    private fun normalizeLinkList(links: List<String>): String {
-        return links
-            .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(separator = "\n")
+    private companion object {
+        const val REQUIRED_TOKEN_LENGTH = 32
     }
 }

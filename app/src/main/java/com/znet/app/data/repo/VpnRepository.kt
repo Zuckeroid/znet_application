@@ -13,6 +13,7 @@ import com.znet.app.data.remote.DeviceRegistrationData
 import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
+import com.znet.app.data.remote.InvalidTokenException
 import com.znet.app.vpn.ZnetVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -42,11 +43,7 @@ class VpnRepository(
                 deviceData = deviceData
             ).getOrThrow()
 
-            finalizeAuthentication(
-                access = access,
-                authBaseUrl = authBaseUrl,
-                fallbackToken = cleanToken
-            )
+            finalizeTokenExchange(access)
         }
     }
 
@@ -54,9 +51,9 @@ class VpnRepository(
         return runCatching {
             val prefs = preferencesRepository.preferences.first()
             val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
-            val sessionToken = prefs.deviceToken.trim().ifBlank { prefs.authToken.trim() }
+            val sessionToken = prefs.deviceToken.trim()
 
-            require(sessionToken.isNotBlank()) { "токен не найден" }
+            require(sessionToken.isNotBlank()) { "Session token is missing" }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val deviceData = buildDeviceRegistrationData()
@@ -66,10 +63,9 @@ class VpnRepository(
                 deviceData = deviceData
             ).getOrThrow()
 
-            finalizeAuthentication(
+            finalizeSessionRefresh(
                 access = access,
-                authBaseUrl = authBaseUrl,
-                fallbackToken = sessionToken
+                currentDeviceToken = sessionToken
             )
         }
     }
@@ -146,28 +142,26 @@ class VpnRepository(
         )
     }
 
-    private suspend fun finalizeAuthentication(
-        access: TokenAccessResponse,
-        authBaseUrl: String,
-        fallbackToken: String
+    private suspend fun finalizeTokenExchange(
+        access: TokenAccessResponse
     ): ResolvedNodeAccess {
-        val sessionToken = access.deviceToken
+        val deviceToken = access.deviceToken
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?: access.issuedToken
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: fallbackToken
+            ?: throw InvalidTokenException("Device session token is missing")
+        preferencesRepository.setDeviceSession(deviceToken)
+        return resolveNodeAccess(access)
+    }
 
-        preferencesRepository.setOrchestrator(authBaseUrl, sessionToken)
-        preferencesRepository.clearManualVlessLink()
-        preferencesRepository.setTokenAuthMetadata(
-            deviceToken = access.deviceToken,
-            hasActiveAccess = access.hasActiveAccess,
-            activeSubscriptionLinks = access.activeSubscriptionLinks,
-            filteredSubscriptionLinks = access.filteredSubscriptionLinks,
-            selectedSubscriptionLink = access.selectedSubscriptionLink
-        )
+    private suspend fun finalizeSessionRefresh(
+        access: TokenAccessResponse,
+        currentDeviceToken: String
+    ): ResolvedNodeAccess {
+        val nextDeviceToken = access.deviceToken
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: currentDeviceToken
+        preferencesRepository.setDeviceSession(nextDeviceToken)
         return resolveNodeAccess(
             access = access
         )
@@ -175,7 +169,7 @@ class VpnRepository(
 
     private fun resolveNodeAccess(access: TokenAccessResponse): ResolvedNodeAccess {
         if (access.hasActiveAccess == false) {
-            throw NoActiveAccessException("у токена нет активного доступа")
+            throw NoActiveAccessException("No active access for this device")
         }
         if (access.connectionReady == false) {
             throw AccessNotReadyException(ACCESS_NOT_READY_MESSAGE)
@@ -188,7 +182,7 @@ class VpnRepository(
 
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
-        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
-        const val ACCESS_NOT_READY_MESSAGE = "доступ еще не готов"
+        const val INVALID_TOKEN_MESSAGE = "Invalid token"
+        const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
     }
 }

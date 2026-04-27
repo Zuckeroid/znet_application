@@ -145,6 +145,21 @@ fun ZnetAppScreen(
         viewModel.consumeAutoConnectRequest()
     }
 
+    if (state.sessionRestoreInProgress) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = Color(0xFF02070C),
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { padding ->
+            SessionRestoreScreen(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        }
+        return
+    }
+
     if (!state.isAuthenticated) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -247,6 +262,35 @@ fun ZnetAppScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SessionRestoreScreen(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFF01050A), Color(0xFF052313), Color(0xFF01050A))
+                )
+            )
+            .padding(horizontal = 20.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Znet",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        CircularProgressIndicator(
+            color = NeonGreen,
+            strokeWidth = 2.5.dp
+        )
     }
 }
 

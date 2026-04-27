@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -120,37 +119,6 @@ class OrchestratorClient(
             ?: result?.booleanOrNull("has_active_access", "hasActiveAccess")
             ?: root.booleanOrNull("has_active_access", "hasActiveAccess")
 
-        val connectionLinks = buildList {
-            addAll(connection?.extractLinksFromElement("links", "active_subscription_links", "activeSubscriptionLinks").orEmpty())
-            connection?.stringOrNull("link", "subscription_link", "subscriptionLink", "url")
-                ?.takeIf { it.isNotBlank() }
-                ?.let(::add)
-        }
-
-        val activeSubscriptionLinks = (
-            connectionLinks +
-                payload.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks") +
-                (result?.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks") ?: emptyList()) +
-                root.extractLinksFromElement("active_subscription_links", "activeSubscriptionLinks")
-            )
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-
-        val filteredSubscriptionLinks = (
-            payload.filteredSubscriptionLinks() +
-                (result?.filteredSubscriptionLinks() ?: emptyList()) +
-                root.filteredSubscriptionLinks()
-            )
-            .distinct()
-
-        val selectedSubscriptionLink = connection?.stringOrNull(
-            "link",
-            "subscription_link",
-            "subscriptionLink",
-            "url"
-        ) ?: filteredSubscriptionLinks.firstOrNull() ?: activeSubscriptionLinks.firstOrNull()
-
         val link = connection?.stringOrNull(
             "link",
             "subscription_link",
@@ -175,7 +143,7 @@ class OrchestratorClient(
             "node_link",
             "link",
             "url"
-        ) ?: selectedSubscriptionLink
+        )
 
         val xrayConfig = connection?.stringOrNull(
             "payload",
@@ -200,7 +168,7 @@ class OrchestratorClient(
         )
 
         if (hasActiveAccess == false) {
-            throw NoActiveAccessException("у токена нет активного доступа")
+            throw NoActiveAccessException("No active access for this device")
         }
 
         return TokenAccessResponse(
@@ -225,60 +193,10 @@ class OrchestratorClient(
             flagEmoji = payload.stringOrNull("flagEmoji", "flag_emoji")
                 ?: result?.stringOrNull("flagEmoji", "flag_emoji")
                 ?: root.stringOrNull("flagEmoji", "flag_emoji"),
-            issuedToken = payload.stringOrNull(
-                "token",
-                "authToken",
-                "auth_token",
-                "accessToken",
-                "access_token"
-            ) ?: result?.stringOrNull(
-                "token",
-                "authToken",
-                "auth_token",
-                "accessToken",
-                "access_token"
-            ) ?: root.stringOrNull(
-                "token",
-                "authToken",
-                "auth_token",
-                "accessToken",
-                "access_token"
-            ) ?: deviceToken,
-            orchestratorBaseUrl = payload.stringOrNull(
-                "orchestratorUrl",
-                "orchestrator_url",
-                "orchestratorBaseUrl",
-                "orchestrator_base_url",
-                "baseUrl",
-                "base_url"
-            ) ?: result?.stringOrNull(
-                "orchestratorUrl",
-                "orchestrator_url",
-                "orchestratorBaseUrl",
-                "orchestrator_base_url",
-                "baseUrl",
-                "base_url"
-            ) ?: root.stringOrNull(
-                "orchestratorUrl",
-                "orchestrator_url",
-                "orchestratorBaseUrl",
-                "orchestrator_base_url",
-                "baseUrl",
-                "base_url"
-            ),
             deviceToken = deviceToken,
             hasActiveAccess = hasActiveAccess,
-            activeSubscriptionLinks = activeSubscriptionLinks,
-            filteredSubscriptionLinks = filteredSubscriptionLinks,
-            selectedSubscriptionLink = selectedSubscriptionLink,
-            contractVersion = payload.stringOrNull("contract_version", "contractVersion")
-                ?: result?.stringOrNull("contract_version", "contractVersion")
-                ?: root.stringOrNull("contract_version", "contractVersion"),
             connectionReady = connection?.booleanOrNull("ready"),
-            connectionType = connection?.stringOrNull("type"),
             connectionProtocol = connection?.stringOrNull("protocol"),
-            connectionRevision = connection?.stringOrNull("revision", "config_revision", "configRevision"),
-            serviceOrderId = service?.stringOrNull("order_id", "orderId"),
             serviceTitle = service?.stringOrNull("title", "name"),
             serviceExpiresAt = service?.stringOrNull("expires_at", "expiresAt"),
             serviceDaysRemaining = service?.intOrNull("days_remaining", "daysRemaining")
@@ -335,80 +253,12 @@ class OrchestratorClient(
         return null
     }
 
-    private fun JsonObject.extractLinksFromElement(vararg keys: String): List<String> {
-        val links = mutableListOf<String>()
-        keys.forEach { key ->
-            links += this[key].extractLinkValues()
-        }
-        return links
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-    }
-
-    private fun JsonObject.filteredSubscriptionLinks(): List<String> {
-        val subscriptions = mutableListOf<JsonObject>()
-        subscriptions += arrayObjectsOrEmpty("subscriptions")
-        subscriptions += arrayObjectsOrEmpty("subscrpitions")
-        return subscriptions.mapNotNull { item ->
-            val orderStatus = item.stringOrNull("order_status", "orderStatus")
-            val provisionStatus = item.stringOrNull("provision_status", "provisionStatus")
-            val link = item.stringOrNull(
-                "subscription_link",
-                "subscription_ink",
-                "subscriptionLink",
-                "link",
-                "url",
-                "uri",
-                "vless"
-            )
-            if (
-                orderStatus.equals("active", ignoreCase = true) &&
-                provisionStatus.equals("active", ignoreCase = true) &&
-                !link.isNullOrBlank()
-            ) {
-                link.trim()
-            } else {
-                null
-            }
-        }
-    }
-
-    private fun JsonObject.arrayObjectsOrEmpty(key: String): List<JsonObject> {
-        val array = this[key] as? JsonArray ?: return emptyList()
-        return array.mapNotNull { it as? JsonObject }
-    }
-
-    private fun JsonElement?.extractLinkValues(): List<String> {
-        return when (this) {
-            is JsonPrimitive -> listOfNotNull(contentOrNull?.trim())
-            is JsonArray -> this.flatMap { it.extractLinkValues() }
-            is JsonObject -> {
-                val direct = stringOrNull(
-                    "subscription_link",
-                    "subscription_ink",
-                    "subscriptionLink",
-                    "link",
-                    "url",
-                    "uri",
-                    "vless"
-                )
-                if (direct != null) {
-                    listOf(direct)
-                } else {
-                    emptyList()
-                }
-            }
-
-            else -> emptyList()
-        }
-    }
-
     private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
     private fun JsonObject.objectOrNull(key: String): JsonObject? = this[key].asObjectOrNull()
 
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
-        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
+        const val INVALID_TOKEN_MESSAGE = "Invalid token"
     }
 }
 
@@ -438,19 +288,10 @@ data class TokenAccessResponse(
     val country: String?,
     val city: String?,
     val flagEmoji: String?,
-    val issuedToken: String?,
-    val orchestratorBaseUrl: String?,
     val deviceToken: String? = null,
     val hasActiveAccess: Boolean? = null,
-    val activeSubscriptionLinks: List<String> = emptyList(),
-    val filteredSubscriptionLinks: List<String> = emptyList(),
-    val selectedSubscriptionLink: String? = null,
-    val contractVersion: String? = null,
     val connectionReady: Boolean? = null,
-    val connectionType: String? = null,
     val connectionProtocol: String? = null,
-    val connectionRevision: String? = null,
-    val serviceOrderId: String? = null,
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
