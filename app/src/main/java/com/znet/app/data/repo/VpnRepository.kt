@@ -79,21 +79,50 @@ class VpnRepository(
 
     suspend fun loadInstalledApps(): List<InstalledApp> = withContext(Dispatchers.Default) {
         val pm = context.packageManager
-        pm.getInstalledApplications(0)
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        pm.queryIntentActivities(launcherIntent, 0)
             .asSequence()
-            .filter { app ->
-                app.packageName != context.packageName &&
-                    pm.getLaunchIntentForPackage(app.packageName) != null &&
-                    (app.flags and ApplicationInfo.FLAG_SYSTEM == 0)
-            }
-            .map { app ->
+            .mapNotNull { resolved ->
+                val app = resolved.activityInfo?.applicationInfo ?: return@mapNotNull null
+                val isUserApp = (app.flags and ApplicationInfo.FLAG_SYSTEM == 0) ||
+                    (app.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP != 0)
+                val packageName = app.packageName?.trim().orEmpty()
+                if (packageName.isBlank() || packageName == context.packageName || !isUserApp) {
+                    return@mapNotNull null
+                }
                 InstalledApp(
-                    packageName = app.packageName,
+                    packageName = packageName,
                     label = pm.getApplicationLabel(app).toString()
                 )
             }
-            .sortedBy { it.label.lowercase() }
+            .distinctBy { app -> app.packageName }
+            .sortedWith(
+                compareBy<InstalledApp> { app -> app.label.lowercase() }
+                    .thenBy { app -> app.packageName }
+            )
             .toList()
+            .ifEmpty {
+                pm.getInstalledApplications(0)
+                    .asSequence()
+                    .filter { app ->
+                        val isUserApp = (app.flags and ApplicationInfo.FLAG_SYSTEM == 0) ||
+                            (app.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP != 0)
+                        app.packageName != context.packageName &&
+                            pm.getLaunchIntentForPackage(app.packageName) != null &&
+                            isUserApp
+                    }
+                    .map { app ->
+                        InstalledApp(
+                            packageName = app.packageName,
+                            label = pm.getApplicationLabel(app).toString()
+                        )
+                    }
+                    .sortedBy { app -> app.label.lowercase() }
+                    .toList()
+            }
     }
 
     fun startVpn(

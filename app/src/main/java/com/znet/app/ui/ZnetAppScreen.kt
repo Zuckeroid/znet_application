@@ -99,6 +99,12 @@ private val NeonMuted = Color(0xFF6D7D8A)
 private val NeonButtonOutline = Color(0xFF48FF70)
 private val NeonButtonBg = Color(0xFF0A2413)
 
+private data class PolicyAppItem(
+    val packageName: String,
+    val label: String,
+    val installed: Boolean
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ZnetAppScreen(
@@ -846,12 +852,63 @@ private fun AppPolicySection(
     onEnabledChanged: (Boolean) -> Unit,
     onTogglePackage: (String) -> Unit
 ) {
-    val visibleApps = remember(apps, selectedPackages, recommendedPackages) {
-        apps.sortedWith(
-            compareByDescending<InstalledApp> { selectedPackages.contains(it.packageName) }
-                .thenByDescending { recommendedPackages.contains(it.packageName) }
-                .thenBy { it.label.lowercase() }
-        ).take(80)
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    var query by rememberSaveable("${title}_query") { mutableStateOf("") }
+    val normalizedSelected = remember(selectedPackages) { selectedPackages.normalizedPackageSet() }
+    val normalizedRecommended = remember(recommendedPackages) { recommendedPackages.normalizedPackageSet() }
+    val installedItems = remember(apps) {
+        apps.map { app ->
+            PolicyAppItem(
+                packageName = app.packageName,
+                label = app.label,
+                installed = true
+            )
+        }
+    }
+    val installedPackages = remember(installedItems) {
+        installedItems.map { item -> item.packageName }.toSet()
+    }
+    val missingItems = remember(normalizedSelected, normalizedRecommended, installedPackages) {
+        (normalizedSelected + normalizedRecommended)
+            .filterNot { packageName -> installedPackages.contains(packageName) }
+            .sorted()
+            .map { packageName ->
+                PolicyAppItem(
+                    packageName = packageName,
+                    label = packageName,
+                    installed = false
+                )
+            }
+    }
+    val filteredMissingItems = remember(missingItems, query) {
+        missingItems.filterByPolicyQuery(query)
+    }
+    val filteredInstalledItems = remember(installedItems, normalizedSelected, normalizedRecommended, query) {
+        installedItems
+            .filterByPolicyQuery(query)
+            .sortedWith(
+                compareByDescending<PolicyAppItem> { item -> normalizedSelected.contains(item.packageName) }
+                    .thenByDescending { item -> normalizedRecommended.contains(item.packageName) }
+                    .thenBy { item -> item.label.lowercase() }
+                    .thenBy { item -> item.packageName }
+            )
+    }
+    val visibleInstalledItems = remember(filteredInstalledItems, expanded, query) {
+        if (expanded || query.isNotBlank()) {
+            filteredInstalledItems
+        } else {
+            filteredInstalledItems.take(POLICY_SECTION_PREVIEW_LIMIT)
+        }
+    }
+    val hiddenInstalledCount = filteredInstalledItems.size - visibleInstalledItems.size
+    val missingSelectedCount = missingItems.count { item -> normalizedSelected.contains(item.packageName) }
+    val installedSelectedCount = installedItems.count { item -> normalizedSelected.contains(item.packageName) }
+
+    fun toggleExpanded() {
+        expanded = !expanded
+        if (!expanded) {
+            query = ""
+        }
     }
 
     Card(
@@ -867,7 +924,7 @@ private fun AppPolicySection(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${selectedPackages.size} выбрано / ${recommendedPackages.size} рекомендовано",
+                        "${normalizedSelected.size} выбрано / ${normalizedRecommended.size} рекомендовано / ${installedItems.size} установлено",
                         color = Color(0xFF92A6B6),
                         fontSize = 12.sp
                     )
@@ -876,50 +933,149 @@ private fun AppPolicySection(
             }
             Text(description, color = Color(0xFF92A6B6), fontSize = 12.sp)
 
-            visibleApps.forEach { app ->
-                val selected = selectedPackages.contains(app.packageName)
-                val recommended = recommendedPackages.contains(app.packageName)
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF071019)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+            if (missingItems.isNotEmpty()) {
+                val missingText = if (missingSelectedCount > 0) {
+                    "$missingSelectedCount выбрано, но не установлено"
+                } else {
+                    "${missingItems.size} рекомендовано, но не установлено"
+                }
+                Text(missingText, color = Color(0xFFFFD36A), fontSize = 12.sp)
+            }
+
+            if (expanded || query.isNotBlank()) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Поиск приложения") }
+                )
+            }
+
+            filteredMissingItems.forEach { app ->
+                PolicyAppRow(
+                    app = app,
+                    enabled = enabled,
+                    selected = normalizedSelected.contains(app.packageName),
+                    recommended = normalizedRecommended.contains(app.packageName),
+                    onTogglePackage = onTogglePackage
+                )
+            }
+
+            visibleInstalledItems.forEach { app ->
+                PolicyAppRow(
+                    app = app,
+                    enabled = enabled,
+                    selected = normalizedSelected.contains(app.packageName),
+                    recommended = normalizedRecommended.contains(app.packageName),
+                    onTogglePackage = onTogglePackage
+                )
+            }
+
+            if (hiddenInstalledCount > 0 || expanded) {
+                Button(
+                    onClick = { toggleExpanded() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonButtonBg,
+                        contentColor = NeonGreen
+                    ),
+                    border = BorderStroke(1.2.dp, NeonButtonOutline)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = selected,
-                            enabled = enabled,
-                            onCheckedChange = { onTogglePackage(app.packageName) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = app.label,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = app.packageName,
-                                color = Color(0xFF7F93A3),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (recommended) {
-                                Text("Рекомендовано", color = NeonGreen, fontSize = 11.sp)
-                            }
+                    Text(
+                        if (expanded) {
+                            "Свернуть список"
+                        } else {
+                            "Показать все приложения (${filteredInstalledItems.size})"
                         }
-                    }
+                    )
+                }
+            }
+
+            if (installedSelectedCount == 0 && normalizedSelected.isNotEmpty()) {
+                Text(
+                    "Выбранные пакеты сохранятся, но применятся только после установки этих приложений на телефон.",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PolicyAppRow(
+    app: PolicyAppItem,
+    enabled: Boolean,
+    selected: Boolean,
+    recommended: Boolean,
+    onTogglePackage: (String) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF071019)),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = selected,
+                enabled = enabled,
+                onCheckedChange = { onTogglePackage(app.packageName) }
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = app.label,
+                    color = if (app.installed) Color.White else Color(0xFFFFD36A),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = app.packageName,
+                    color = Color(0xFF7F93A3),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val badges = listOfNotNull(
+                    if (recommended) "Рекомендовано" else null,
+                    if (!app.installed) "Нет на телефоне" else null
+                )
+                if (badges.isNotEmpty()) {
+                    Text(
+                        badges.joinToString(" / "),
+                        color = if (app.installed) NeonGreen else Color(0xFFFFD36A),
+                        fontSize = 11.sp
+                    )
                 }
             }
         }
     }
 }
+
+private fun Iterable<String>.normalizedPackageSet(): Set<String> {
+    return map { item -> item.trim() }
+        .filter { item -> item.isNotBlank() }
+        .toSet()
+}
+
+private fun List<PolicyAppItem>.filterByPolicyQuery(query: String): List<PolicyAppItem> {
+    val normalizedQuery = query.trim().lowercase()
+    if (normalizedQuery.isBlank()) {
+        return this
+    }
+
+    return filter { item ->
+        item.label.lowercase().contains(normalizedQuery) ||
+            item.packageName.lowercase().contains(normalizedQuery)
+    }
+}
+
+private const val POLICY_SECTION_PREVIEW_LIMIT = 8
 
 private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
     return when (state.routingPolicy.normalizedMode) {
