@@ -145,26 +145,6 @@ fun ZnetAppScreen(
         viewModel.consumeAutoConnectRequest()
     }
 
-    val showSessionRestore = !state.isAuthenticated &&
-        state.authInProgress &&
-        state.authError.isNullOrBlank() &&
-        state.authTokenInput.trim().length == AUTH_TOKEN_LENGTH
-
-    if (showSessionRestore) {
-        Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = Color(0xFF02070C),
-            snackbarHost = { SnackbarHost(snackbarHostState) }
-        ) { padding ->
-            SessionRestoreScreen(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
-        }
-        return
-    }
-
     if (!state.isAuthenticated) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -271,63 +251,12 @@ fun ZnetAppScreen(
 }
 
 @Composable
-private fun SessionRestoreScreen(
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color(0xFF01050A), Color(0xFF052313), Color(0xFF01050A))
-                )
-            )
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        CircularProgressIndicator(
-            color = NeonGreen,
-            strokeWidth = 2.5.dp
-        )
-        Spacer(modifier = Modifier.height(18.dp))
-        Text(
-            text = "Проверяем доступ устройства",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "Входить заново не нужно",
-            color = Color(0xFF9EB0BE)
-        )
-    }
-}
-
-@Composable
 private fun TokenAuthScreen(
     state: MainUiState,
     onTokenChanged: (String) -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val normalizedToken = state.authTokenInput.trim()
-    var lastAutoSubmittedToken by rememberSaveable { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(normalizedToken, state.authInProgress, state.isAuthenticated) {
-        if (
-            normalizedToken.length == AUTH_TOKEN_LENGTH &&
-            !state.authInProgress &&
-            !state.isAuthenticated &&
-            normalizedToken != lastAutoSubmittedToken
-        ) {
-            lastAutoSubmittedToken = normalizedToken
-            onSubmit()
-        } else if (normalizedToken.length != AUTH_TOKEN_LENGTH) {
-            lastAutoSubmittedToken = null
-        }
-    }
-
     val uriHandler = LocalUriHandler.current
     val signUpText = buildAnnotatedString {
         append("Нет аккаунта? зарегистрироваться ")
@@ -823,5 +752,4 @@ private fun formatDaysRemaining(
     }
 }
 
-private const val AUTH_TOKEN_LENGTH = 32
 private val SIGN_UP_URL = BuildConfig.AUTH_API_URL.trimEnd('/') + "/signup"

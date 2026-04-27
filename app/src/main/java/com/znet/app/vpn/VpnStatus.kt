@@ -10,9 +10,6 @@ data class VpnStatus(
     val state: ConnectionState = ConnectionState.DISCONNECTED,
     val currentNode: ServerNode? = null,
     val latencyMs: Long = -1,
-    val publicIp: String = "",
-    val rxBytes: Long = 0,
-    val txBytes: Long = 0,
     val lastUpdatedMs: Long = System.currentTimeMillis(),
     val errorMessage: String? = null
 )

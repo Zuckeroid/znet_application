@@ -25,7 +25,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import android.app.usage.UsageStatsManager
-import android.net.TrafficStats
 
 class ZnetVpnService : VpnService() {
 
@@ -34,12 +33,9 @@ class ZnetVpnService : VpnService() {
     private val json by lazy { Json { ignoreUnknownKeys = true } }
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var statsJobActive = false
     private var monitorJobActive = false
     private var splitTunnelApps: Set<String> = emptySet()
     private var autoDisconnectApps: Set<String> = emptySet()
-    private var startRxBytes: Long = 0L
-    private var startTxBytes: Long = 0L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -118,11 +114,6 @@ class ZnetVpnService : VpnService() {
             establishTun(splitTunnelApps)
             xrayEngine.ensureReady()
             xrayEngine.start(xrayConfig, vpnInterface?.fd)
-
-            startRxBytes = TrafficStats.getTotalRxBytes()
-            startTxBytes = TrafficStats.getTotalTxBytes()
-
-            startStatsLoop(node, latencyMs)
             startAppMonitor()
 
             VpnStatusBus.update {
@@ -169,7 +160,6 @@ class ZnetVpnService : VpnService() {
     }
 
     private suspend fun disconnect(state: ConnectionState, message: String?) {
-        statsJobActive = false
         monitorJobActive = false
 
         runCatching {
@@ -185,31 +175,8 @@ class ZnetVpnService : VpnService() {
             it.copy(
                 state = state,
                 errorMessage = message,
-                currentNode = if (state == ConnectionState.DISCONNECTED) null else it.currentNode,
-                rxBytes = if (state == ConnectionState.DISCONNECTED) 0 else it.rxBytes,
-                txBytes = if (state == ConnectionState.DISCONNECTED) 0 else it.txBytes
+                currentNode = if (state == ConnectionState.DISCONNECTED) null else it.currentNode
             )
-        }
-    }
-
-    private fun startStatsLoop(node: ServerNode, latency: Long) {
-        if (statsJobActive) return
-        statsJobActive = true
-        serviceScope.launch {
-            while (isActive && statsJobActive) {
-                val rx = (TrafficStats.getTotalRxBytes() - startRxBytes).coerceAtLeast(0L)
-                val tx = (TrafficStats.getTotalTxBytes() - startTxBytes).coerceAtLeast(0L)
-                VpnStatusBus.update {
-                    it.copy(
-                        state = ConnectionState.CONNECTED,
-                        currentNode = node,
-                        latencyMs = latency,
-                        rxBytes = rx,
-                        txBytes = tx
-                    )
-                }
-                delay(2_000)
-            }
         }
     }
 

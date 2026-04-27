@@ -4,7 +4,6 @@ import android.content.Context
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.repo.VpnRepository
-import com.znet.app.workers.StatsScheduler
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -16,8 +15,4 @@ class AppContainer(context: Context) {
         preferencesRepository = preferencesRepository,
         orchestratorClient = orchestratorClient
     )
-
-    fun scheduleWorkers() {
-        StatsScheduler.schedule(appContext)
-    }
 }

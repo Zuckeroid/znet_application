@@ -36,8 +36,6 @@ data class MainUiState(
     val autoDisconnectApps: Set<String> = emptySet(),
     val adaptiveEnabled: Boolean = true,
     val latencyMs: Long = -1,
-    val rxBytes: Long = 0,
-    val txBytes: Long = 0,
     val protocol: String? = null,
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
@@ -106,8 +104,6 @@ class MainViewModel(
             autoDisconnectApps = prefs.autoDisconnectApps,
             adaptiveEnabled = prefs.adaptiveEnabled,
             latencyMs = status.latencyMs,
-            rxBytes = status.rxBytes,
-            txBytes = status.txBytes,
             protocol = access?.protocol,
             serviceTitle = access?.serviceTitle,
             serviceExpiresAt = access?.serviceExpiresAt,
@@ -138,7 +134,7 @@ class MainViewModel(
             authTokenInput.value = persistedToken
 
             if (persistedToken.length == REQUIRED_TOKEN_LENGTH) {
-                authInProgress.value = true
+                isAuthenticated.value = true
                 val restore = vpnRepository.refreshAccessBundle()
                 restore.fold(
                     onSuccess = { access ->
@@ -156,7 +152,6 @@ class MainViewModel(
                         )
                     }
                 )
-                authInProgress.value = false
             }
         }
     }
