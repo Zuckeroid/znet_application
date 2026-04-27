@@ -264,7 +264,7 @@ object NodeLinkConfigFactory {
     private fun buildXrayConfig(primaryOutbound: JsonObject): String {
         val config = buildJsonObject {
             put("log", buildJsonObject {
-                put("loglevel", JsonPrimitive("warning"))
+                put("loglevel", JsonPrimitive("info"))
             })
             put("inbounds", buildJsonArray {
                 add(
