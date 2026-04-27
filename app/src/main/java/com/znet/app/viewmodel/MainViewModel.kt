@@ -205,6 +205,38 @@ class MainViewModel(
                 isAuthenticated.value = true
                 pendingAutoConnect.value = true
                 authError.value = null
+                authTokenInput.value = currentSessionToken()
+                message.value = null
+            },
+            onFailure = {
+                val restored = tryRestoreSessionAfterExchange(consumedToken = token)
+                if (!restored) {
+                    resolvedAccess.value = null
+                    isAuthenticated.value = false
+                    pendingAutoConnect.value = false
+                    authError.value = INVALID_TOKEN_MESSAGE
+                }
+            }
+        )
+        authInProgress.value = false
+    }
+
+    private suspend fun tryRestoreSessionAfterExchange(consumedToken: String): Boolean {
+        val persistedToken = currentSessionToken()
+        if (persistedToken.isBlank() || persistedToken == consumedToken || persistedToken.length != REQUIRED_TOKEN_LENGTH) {
+            return false
+        }
+
+        val restored = vpnRepository.refreshAccessBundle()
+        restored.fold(
+            onSuccess = { access ->
+                resolvedAccess.value = access
+                loadedNodes.value = listOf(access.node)
+                preferencesRepository.setSelectedNode(access.node.id)
+                isAuthenticated.value = true
+                pendingAutoConnect.value = true
+                authError.value = null
+                authTokenInput.value = persistedToken
                 message.value = null
             },
             onFailure = {
@@ -214,7 +246,13 @@ class MainViewModel(
                 authError.value = INVALID_TOKEN_MESSAGE
             }
         )
-        authInProgress.value = false
+
+        return restored.isSuccess
+    }
+
+    private suspend fun currentSessionToken(): String {
+        val prefs = preferencesRepository.preferences.first()
+        return prefs.authToken.ifBlank { prefs.deviceToken }.trim()
     }
 
     fun consumeAutoConnectRequest() {
