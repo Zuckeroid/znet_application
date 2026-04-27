@@ -25,27 +25,12 @@ data class ResolvedNodeAccess(
 
 object NodeLinkConfigFactory {
     fun fromTokenAccess(access: TokenAccessResponse): ResolvedNodeAccess {
-        val inlineConfig = access.xrayConfig?.trim()
-        if (!inlineConfig.isNullOrBlank()) {
-            val endpoint = access.nodeLink?.let { parseEndpoint(it) }
-            return ResolvedNodeAccess(
-                node = buildNode(access, endpoint),
-                xrayConfig = normalizeRuntimeConfig(inlineConfig),
-                protocol = access.connectionProtocol,
-                serviceTitle = access.serviceTitle,
-                serviceExpiresAt = access.serviceExpiresAt,
-                serviceDaysRemaining = access.serviceDaysRemaining
-            )
-        }
+        val runtimeConfig = access.xrayConfig?.trim().orEmpty()
+        require(runtimeConfig.isNotBlank()) { "Runtime config is missing" }
 
-        val link = access.nodeLink?.trim().orEmpty()
-        require(link.isNotBlank()) { "Node link is missing" }
-
-        val parsed = parseLink(link)
-        val wrappedConfig = buildXrayConfig(parsed.outbound)
         return ResolvedNodeAccess(
-            node = buildNode(access, parsed.endpoint),
-            xrayConfig = wrappedConfig,
+            node = buildNode(access, null),
+            xrayConfig = normalizeRuntimeConfig(runtimeConfig),
             protocol = access.connectionProtocol,
             serviceTitle = access.serviceTitle,
             serviceExpiresAt = access.serviceExpiresAt,

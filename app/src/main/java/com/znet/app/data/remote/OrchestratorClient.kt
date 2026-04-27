@@ -119,32 +119,6 @@ class OrchestratorClient(
             ?: result?.booleanOrNull("has_active_access", "hasActiveAccess")
             ?: root.booleanOrNull("has_active_access", "hasActiveAccess")
 
-        val link = connection?.stringOrNull(
-            "link",
-            "subscription_link",
-            "subscriptionLink",
-            "url"
-        ) ?: payload.stringOrNull(
-            "nodeLink",
-            "node_link",
-            "link",
-            "url",
-            "nodeUrl",
-            "node_url",
-            "connectionUrl",
-            "connection_url"
-        ) ?: result?.stringOrNull(
-            "nodeLink",
-            "node_link",
-            "link",
-            "url"
-        ) ?: root.stringOrNull(
-            "nodeLink",
-            "node_link",
-            "link",
-            "url"
-        )
-
         val xrayConfig = connection?.stringOrNull(
             "payload",
             "xray_config",
@@ -172,7 +146,6 @@ class OrchestratorClient(
         }
 
         return TokenAccessResponse(
-            nodeLink = link,
             xrayConfig = xrayConfig,
             nodeId = connection?.stringOrNull("node_id", "nodeId")
                 ?: payload.stringOrNull("nodeId", "node_id")
@@ -281,7 +254,6 @@ data class DeviceRegistrationData(
 )
 
 data class TokenAccessResponse(
-    val nodeLink: String?,
     val xrayConfig: String?,
     val nodeId: String?,
     val nodeName: String?,

@@ -19,6 +19,7 @@ import com.znet.app.data.repo.ResolvedNodeAccess
 import com.znet.app.data.repo.VpnRepository
 import com.znet.app.vpn.VpnStatus
 import com.znet.app.vpn.VpnStatusBus
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -404,6 +405,7 @@ class MainViewModel(
         if (error is AccessNotReadyException && sessionToken.length == REQUIRED_TOKEN_LENGTH) {
             enterAuthenticatedPendingState(error)
             authTokenInput.value = ""
+            retryPendingAccessUntilReady(autoConnect = true)
             return
         }
 
@@ -430,6 +432,45 @@ class MainViewModel(
         pendingAutoConnect.value = false
         authError.value = null
         message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
+    }
+
+    private suspend fun retryPendingAccessUntilReady(autoConnect: Boolean) {
+        repeat(PENDING_ACCESS_RETRY_COUNT) { attempt ->
+            delay(PENDING_ACCESS_RETRY_DELAY_MS)
+            val retry = vpnRepository.refreshAccessBundle()
+            val shouldStop = retry.fold(
+                onSuccess = { access ->
+                    applyAuthenticatedAccess(
+                        access = access,
+                        autoConnect = autoConnect
+                    )
+                    true
+                },
+                onFailure = { error ->
+                    when {
+                        isInvalidSessionFailure(error) -> {
+                            invalidateSession(error)
+                            true
+                        }
+                        error is AccessNotReadyException -> {
+                            message.value = if (attempt + 1 >= PENDING_ACCESS_RETRY_COUNT) {
+                                ACCESS_NOT_READY_MESSAGE
+                            } else {
+                                "Preparing device access..."
+                            }
+                            false
+                        }
+                        else -> {
+                            message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
+                            true
+                        }
+                    }
+                }
+            )
+            if (shouldStop) {
+                return
+            }
+        }
     }
 
     private fun handleUnauthenticatedFailure(error: Throwable) {
@@ -464,6 +505,8 @@ class MainViewModel(
     private companion object {
         const val TAG = "MainViewModel"
         const val REQUIRED_TOKEN_LENGTH = 32
+        const val PENDING_ACCESS_RETRY_COUNT = 10
+        const val PENDING_ACCESS_RETRY_DELAY_MS = 1_500L
         const val INVALID_TOKEN_MESSAGE = "Invalid token"
         const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
     }
