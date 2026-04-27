@@ -104,6 +104,8 @@ class OrchestratorClient(
     private fun parseTokenAccessResponse(rawBody: String): TokenAccessResponse {
         require(rawBody.isNotBlank()) { "Token auth response is empty" }
         val root = json.parseToJsonElement(rawBody).jsonObject
+        throwEnvelopeErrorIfPresent(root)
+
         val payload = unwrapPayload(root)
         val result = root.objectOrNull("result")
         val app = payload.objectOrNull("app") ?: result?.objectOrNull("app") ?: root.objectOrNull("app")
@@ -197,6 +199,24 @@ class OrchestratorClient(
             root.objectOrNull("error")?.stringOrNull("message", "msg", "error")
                 ?: root.stringOrNull("message", "msg", "error")
         }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun throwEnvelopeErrorIfPresent(root: JsonObject) {
+        val error = root.objectOrNull("error") ?: return
+        val message = error.stringOrNull("message", "msg", "error") ?: INVALID_TOKEN_MESSAGE
+        val code = error.intOrNull("code", "status", "statusCode")
+
+        if (code == 401 || code == 403) {
+            throw InvalidTokenException(
+                message = message,
+                statusCode = code
+            )
+        }
+
+        throw TokenAuthRequestException(
+            message = message,
+            statusCode = code
+        )
     }
 
     private fun unwrapPayload(root: JsonObject): JsonObject {
