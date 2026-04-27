@@ -269,12 +269,12 @@ object NodeLinkConfigFactory {
             put("inbounds", buildJsonArray {
                 add(
                     buildJsonObject {
-                        put("tag", JsonPrimitive("socks-in"))
-                        put("listen", JsonPrimitive("127.0.0.1"))
-                        put("port", JsonPrimitive(10808))
-                        put("protocol", JsonPrimitive("socks"))
+                        put("tag", JsonPrimitive("tun-in"))
+                        put("port", JsonPrimitive(0))
+                        put("protocol", JsonPrimitive("tun"))
                         put("settings", buildJsonObject {
-                            put("udp", JsonPrimitive(true))
+                            put("name", JsonPrimitive("xray0"))
+                            put("MTU", JsonPrimitive(1500))
                         })
                     }
                 )

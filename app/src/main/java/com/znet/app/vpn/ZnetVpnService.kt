@@ -150,9 +150,9 @@ class ZnetVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
 
-        disallowedApps.forEach { packageName ->
+        (disallowedApps + packageName).forEach { blockedPackage ->
             runCatching {
-                builder.addDisallowedApplication(packageName)
+                builder.addDisallowedApplication(blockedPackage)
             }
         }
 
