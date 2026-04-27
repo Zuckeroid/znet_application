@@ -113,7 +113,7 @@ class ZnetVpnService : VpnService() {
             autoDisconnectApps = autoApps
             establishTun(splitTunnelApps)
             xrayEngine.ensureReady()
-            xrayEngine.start(xrayConfig, vpnInterface?.fd)
+            xrayEngine.start(xrayConfig, vpnInterface)
             startAppMonitor()
 
             VpnStatusBus.update {

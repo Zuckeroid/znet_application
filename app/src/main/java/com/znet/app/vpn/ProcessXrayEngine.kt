@@ -1,6 +1,9 @@
 package com.znet.app.vpn
 
 import android.content.Context
+import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -24,11 +27,15 @@ class ProcessXrayEngine(
         installer.installIfNeeded()
     }
 
-    override suspend fun start(configJson: String, tunFd: Int?) = withContext(Dispatchers.IO) {
+    override suspend fun start(
+        configJson: String,
+        tunInterface: ParcelFileDescriptor?,
+    ) = withContext(Dispatchers.IO) {
         stop()
         val binary = installer.installIfNeeded()
         configFile.parentFile?.mkdirs()
         configFile.writeText(configJson)
+        val inheritedTunFd = tunInterface?.let { duplicateTunFdForChild(it) }
 
         val builder = ProcessBuilder(
             binary.absolutePath,
@@ -39,42 +46,51 @@ class ProcessXrayEngine(
             .directory(context.filesDir)
             .redirectErrorStream(true)
 
-        if (tunFd != null && tunFd >= 0) {
-            builder.environment()["XRAY_TUN_FD"] = tunFd.toString()
+        val inheritedFdNumber = inheritedTunFd?.fd
+        if (inheritedFdNumber != null && inheritedFdNumber >= 0) {
+            builder.environment()["XRAY_TUN_FD"] = inheritedFdNumber.toString()
         }
 
-        process = builder.start()
-        val startedProcess = process ?: error("Unable to start xray process")
-        val recentOutput = ArrayDeque<String>()
-        logThread = Thread {
-            runCatching {
-                BufferedReader(InputStreamReader(startedProcess.inputStream)).use { reader ->
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        synchronized(recentOutput) {
-                            if (recentOutput.size >= 20) {
-                                recentOutput.removeFirst()
+        try {
+            process = builder.start()
+            val startedProcess = process ?: error("Unable to start xray process")
+            val recentOutput = ArrayDeque<String>()
+            logThread = Thread {
+                runCatching {
+                    BufferedReader(InputStreamReader(startedProcess.inputStream)).use { reader ->
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            synchronized(recentOutput) {
+                                if (recentOutput.size >= 20) {
+                                    recentOutput.removeFirst()
+                                }
+                                recentOutput.addLast(line)
                             }
-                            recentOutput.addLast(line)
+                            Log.d(TAG, line)
                         }
-                        Log.d(TAG, line)
                     }
+                }.onFailure { error ->
+                    Log.w(TAG, "Failed to read xray output", error)
                 }
-            }.onFailure { error ->
-                Log.w(TAG, "Failed to read xray output", error)
+            }.apply {
+                name = "xray-log-reader"
+                isDaemon = true
+                start()
             }
-        }.apply {
-            name = "xray-log-reader"
-            isDaemon = true
-            start()
-        }
 
-        delay(400)
-        if (!startedProcess.isAlive) {
-            val tail = synchronized(recentOutput) {
-                recentOutput.joinToString(separator = " | ")
-            }.ifBlank { "no xray output" }
-            throw IllegalStateException("Xray exited early: $tail")
+            delay(400)
+            if (!startedProcess.isAlive) {
+                val tail = synchronized(recentOutput) {
+                    recentOutput.joinToString(separator = " | ")
+                }.ifBlank { "no xray output" }
+                throw IllegalStateException("Xray exited early: $tail")
+            }
+        } finally {
+            if (inheritedTunFd != null) {
+                runCatching {
+                    inheritedTunFd.close()
+                }
+            }
         }
     }
 
@@ -88,5 +104,26 @@ class ProcessXrayEngine(
 
     private companion object {
         const val TAG = "ProcessXrayEngine"
+    }
+
+    private fun duplicateTunFdForChild(
+        tunInterface: ParcelFileDescriptor,
+    ): ParcelFileDescriptor {
+        val duplicated = ParcelFileDescriptor.dup(tunInterface.fileDescriptor)
+        runCatching {
+            val flags = Os.fcntlInt(duplicated.fileDescriptor, OsConstants.F_GETFD, 0)
+            Os.fcntlInt(
+                duplicated.fileDescriptor,
+                OsConstants.F_SETFD,
+                flags and OsConstants.FD_CLOEXEC.inv(),
+            )
+        }.onFailure { error ->
+            runCatching {
+                duplicated.close()
+            }
+            throw IllegalStateException("Could not prepare TUN fd for xray", error)
+        }
+
+        return duplicated
     }
 }
