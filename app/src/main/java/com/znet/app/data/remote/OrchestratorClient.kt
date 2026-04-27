@@ -81,8 +81,23 @@ class OrchestratorClient(
             .build()
 
         client.newCall(postRequest).execute().use { response ->
-            require(response.isSuccessful) { "Token auth request failed: ${response.code}" }
-            return response.body?.string().orEmpty()
+            val rawBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val apiMessage = extractApiErrorMessage(rawBody)
+                if (response.code == 401 || response.code == 403) {
+                    throw InvalidTokenException(
+                        message = apiMessage ?: INVALID_TOKEN_MESSAGE,
+                        statusCode = response.code
+                    )
+                }
+
+                throw TokenAuthRequestException(
+                    message = apiMessage ?: "Token auth request failed: ${response.code}",
+                    statusCode = response.code
+                )
+            }
+
+            return rawBody
         }
     }
 
@@ -96,7 +111,10 @@ class OrchestratorClient(
         val connection = payload.objectOrNull("connection") ?: result?.objectOrNull("connection") ?: root.objectOrNull("connection")
         val service = payload.objectOrNull("service") ?: result?.objectOrNull("service") ?: root.objectOrNull("service")
 
+        val device = app?.objectOrNull("device")
         val deviceToken = app?.stringOrNull("token", "device_token", "deviceToken")
+            ?: access?.stringOrNull("device_token", "deviceToken")
+            ?: device?.stringOrNull("token", "device_token", "deviceToken")
         val hasActiveAccess = access?.booleanOrNull("has_active_access", "hasActiveAccess")
             ?: payload.booleanOrNull("has_active_access", "hasActiveAccess")
             ?: result?.booleanOrNull("has_active_access", "hasActiveAccess")
@@ -160,41 +178,48 @@ class OrchestratorClient(
         ) ?: selectedSubscriptionLink
 
         val xrayConfig = connection?.stringOrNull(
+            "payload",
             "xray_config",
             "xrayConfig",
             "config"
         ) ?: payload.stringOrNull(
+            "payload",
             "xrayConfig",
             "xray_config",
             "config"
         ) ?: result?.stringOrNull(
+            "payload",
             "xrayConfig",
             "xray_config",
             "config"
         ) ?: root.stringOrNull(
+            "payload",
             "xrayConfig",
             "xray_config",
             "config"
         )
 
-        require(hasActiveAccess != false) { "Token has no active VPN access" }
-        require(!link.isNullOrBlank() || !xrayConfig.isNullOrBlank()) {
-            "Token auth response has no node link or xray config"
+        if (hasActiveAccess == false) {
+            throw NoActiveAccessException("у токена нет активного доступа")
         }
 
         return TokenAccessResponse(
             nodeLink = link,
             xrayConfig = xrayConfig,
-            nodeId = payload.stringOrNull("nodeId", "node_id")
+            nodeId = connection?.stringOrNull("node_id", "nodeId")
+                ?: payload.stringOrNull("nodeId", "node_id")
                 ?: result?.stringOrNull("nodeId", "node_id")
                 ?: root.stringOrNull("nodeId", "node_id"),
-            nodeName = payload.stringOrNull("nodeName", "node_name", "name")
+            nodeName = connection?.stringOrNull("node_label", "nodeName", "node_name", "name")
+                ?: payload.stringOrNull("nodeName", "node_name", "name")
                 ?: result?.stringOrNull("nodeName", "node_name", "name")
                 ?: root.stringOrNull("nodeName", "node_name", "name"),
-            country = payload.stringOrNull("country")
+            country = connection?.stringOrNull("node_country", "country")
+                ?: payload.stringOrNull("country")
                 ?: result?.stringOrNull("country")
                 ?: root.stringOrNull("country"),
-            city = payload.stringOrNull("city")
+            city = connection?.stringOrNull("node_host", "city")
+                ?: payload.stringOrNull("city")
                 ?: result?.stringOrNull("city")
                 ?: root.stringOrNull("city"),
             flagEmoji = payload.stringOrNull("flagEmoji", "flag_emoji")
@@ -251,10 +276,22 @@ class OrchestratorClient(
                 ?: root.stringOrNull("contract_version", "contractVersion"),
             connectionReady = connection?.booleanOrNull("ready"),
             connectionType = connection?.stringOrNull("type"),
-            connectionRevision = connection?.stringOrNull("revision"),
+            connectionRevision = connection?.stringOrNull("revision", "config_revision", "configRevision"),
             serviceOrderId = service?.stringOrNull("order_id", "orderId"),
             serviceTitle = service?.stringOrNull("title", "name")
         )
+    }
+
+    private fun extractApiErrorMessage(rawBody: String): String? {
+        if (rawBody.isBlank()) {
+            return null
+        }
+
+        return runCatching {
+            val root = json.parseToJsonElement(rawBody).jsonObject
+            root.objectOrNull("error")?.stringOrNull("message", "msg", "error")
+                ?: root.stringOrNull("message", "msg", "error")
+        }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     private fun unwrapPayload(root: JsonObject): JsonObject {
@@ -360,6 +397,7 @@ class OrchestratorClient(
 
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
+        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
     }
 }
 
@@ -403,3 +441,19 @@ data class TokenAccessResponse(
     val serviceOrderId: String? = null,
     val serviceTitle: String? = null
 )
+
+open class TokenAuthException(message: String) : IllegalStateException(message)
+
+class TokenAuthRequestException(
+    message: String,
+    val statusCode: Int? = null
+) : TokenAuthException(message)
+
+class InvalidTokenException(
+    message: String,
+    val statusCode: Int? = null
+) : TokenAuthException(message)
+
+class NoActiveAccessException(message: String) : TokenAuthException(message)
+
+class AccessNotReadyException(message: String) : TokenAuthException(message)

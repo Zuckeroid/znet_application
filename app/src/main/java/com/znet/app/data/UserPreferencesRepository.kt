@@ -72,7 +72,7 @@ class UserPreferencesRepository(
                 filteredSubscriptionLinks = prefs[Keys.filteredSubscriptionLinks] ?: "",
                 selectedSubscriptionLink = prefs[Keys.selectedSubscriptionLink] ?: "",
                 deviceId = prefs[Keys.deviceId] ?: "",
-                selectedNodeId = prefs[Keys.selectedNodeId],
+                selectedNodeId = prefs[Keys.selectedNodeId]?.takeIf { it.isNotBlank() },
                 splitTunnelApps = prefs[Keys.splitTunnelApps] ?: emptySet(),
                 autoDisconnectApps = prefs[Keys.autoDisconnectApps] ?: emptySet(),
                 adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true
@@ -83,6 +83,19 @@ class UserPreferencesRepository(
         context.userPrefsStore.edit { prefs ->
             prefs[Keys.orchestratorBaseUrl] = baseUrl.trimEnd('/')
             prefs[Keys.authToken] = token
+        }
+    }
+
+    suspend fun clearAuthSession() {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.authToken] = ""
+            prefs[Keys.manualVlessLink] = ""
+            prefs[Keys.deviceToken] = ""
+            prefs[Keys.hasActiveAccess] = ""
+            prefs[Keys.activeSubscriptionLinks] = ""
+            prefs[Keys.filteredSubscriptionLinks] = ""
+            prefs[Keys.selectedSubscriptionLink] = ""
+            prefs[Keys.selectedNodeId] = ""
         }
     }
 

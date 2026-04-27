@@ -1,4 +1,4 @@
-﻿package com.znet.app.viewmodel
+package com.znet.app.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -11,6 +11,9 @@ import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AccessNotReadyException
+import com.znet.app.data.remote.InvalidTokenException
+import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.repo.ResolvedNodeAccess
 import com.znet.app.data.repo.VpnRepository
 import com.znet.app.vpn.VpnStatus
@@ -121,7 +124,7 @@ class MainViewModel(
         loadInstalledApps()
         viewModelScope.launch {
             val prefs = preferencesRepository.preferences.first()
-            val persistedToken = prefs.authToken.ifBlank { prefs.deviceToken }
+            val persistedToken = prefs.deviceToken.ifBlank { prefs.authToken }
             authTokenInput.value = persistedToken
 
             if (persistedToken.length == REQUIRED_TOKEN_LENGTH) {
@@ -136,9 +139,11 @@ class MainViewModel(
                         authError.value = null
                         message.value = null
                     },
-                    onFailure = {
-                        resolvedAccess.value = null
-                        isAuthenticated.value = false
+                    onFailure = { error ->
+                        handleStartupRestoreFailure(
+                            persistedToken = persistedToken,
+                            error = error
+                        )
                     }
                 )
                 authInProgress.value = false
@@ -162,7 +167,11 @@ class MainViewModel(
                     message.value = null
                 },
                 onFailure = { err ->
-                    message.value = err.message ?: "Failed to refresh access"
+                    if (isInvalidSessionFailure(err)) {
+                        invalidateSession(err)
+                    } else {
+                        message.value = err.message ?: "Failed to refresh access"
+                    }
                 }
             )
             busy.value = false
@@ -208,23 +217,41 @@ class MainViewModel(
                 authTokenInput.value = currentSessionToken()
                 message.value = null
             },
-            onFailure = {
-                val restored = tryRestoreSessionAfterExchange(consumedToken = token)
+            onFailure = { error ->
+                val restored = tryRestoreSessionAfterExchange(
+                    consumedToken = token,
+                    initialError = error
+                )
                 if (!restored) {
-                    resolvedAccess.value = null
-                    isAuthenticated.value = false
-                    pendingAutoConnect.value = false
-                    authError.value = INVALID_TOKEN_MESSAGE
+                    handleUnauthenticatedFailure(error)
                 }
             }
         )
         authInProgress.value = false
     }
 
-    private suspend fun tryRestoreSessionAfterExchange(consumedToken: String): Boolean {
+    private suspend fun tryRestoreSessionAfterExchange(
+        consumedToken: String,
+        initialError: Throwable
+    ): Boolean {
         val persistedToken = currentSessionToken()
-        if (persistedToken.isBlank() || persistedToken == consumedToken || persistedToken.length != REQUIRED_TOKEN_LENGTH) {
+        if (
+            persistedToken.isBlank() ||
+            persistedToken == consumedToken ||
+            persistedToken.length != REQUIRED_TOKEN_LENGTH
+        ) {
             return false
+        }
+
+        if (initialError is AccessNotReadyException) {
+            resolvedAccess.value = null
+            loadedNodes.value = emptyList()
+            isAuthenticated.value = true
+            pendingAutoConnect.value = false
+            authError.value = null
+            authTokenInput.value = persistedToken
+            message.value = initialError.message ?: ACCESS_NOT_READY_MESSAGE
+            return true
         }
 
         val restored = vpnRepository.refreshAccessBundle()
@@ -239,20 +266,27 @@ class MainViewModel(
                 authTokenInput.value = persistedToken
                 message.value = null
             },
-            onFailure = {
-                resolvedAccess.value = null
-                isAuthenticated.value = false
-                pendingAutoConnect.value = false
-                authError.value = INVALID_TOKEN_MESSAGE
+            onFailure = { error ->
+                if (isInvalidSessionFailure(error)) {
+                    invalidateSession(error)
+                } else {
+                    resolvedAccess.value = null
+                    loadedNodes.value = emptyList()
+                    isAuthenticated.value = true
+                    pendingAutoConnect.value = false
+                    authError.value = null
+                    authTokenInput.value = persistedToken
+                    message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
+                }
             }
         )
 
-        return restored.isSuccess
+        return restored.isSuccess || !isInvalidSessionFailure(restored.exceptionOrNull() ?: return false)
     }
 
     private suspend fun currentSessionToken(): String {
         val prefs = preferencesRepository.preferences.first()
-        return prefs.authToken.ifBlank { prefs.deviceToken }.trim()
+        return prefs.deviceToken.ifBlank { prefs.authToken }.trim()
     }
 
     fun consumeAutoConnectRequest() {
@@ -298,7 +332,7 @@ class MainViewModel(
         viewModelScope.launch {
             val prefs: UserPreferences = preferencesRepository.preferences.first()
             if (!isAuthenticated.value) {
-                val persistedToken = prefs.authToken.ifBlank { prefs.deviceToken }
+                val persistedToken = prefs.deviceToken.ifBlank { prefs.authToken }
                 if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {
                     message.value = "Sign in first"
                     return@launch
@@ -322,7 +356,11 @@ class MainViewModel(
                     message.value = null
                 },
                 onFailure = { err ->
-                    message.value = err.message ?: "Unable to load VPN access"
+                    if (isInvalidSessionFailure(err)) {
+                        invalidateSession(err)
+                    } else {
+                        message.value = err.message ?: "Unable to load VPN access"
+                    }
                 }
             )
             busy.value = false
@@ -351,8 +389,52 @@ class MainViewModel(
         }
     }
 
+    private suspend fun handleStartupRestoreFailure(
+        persistedToken: String,
+        error: Throwable
+    ) {
+        if (isInvalidSessionFailure(error)) {
+            invalidateSession(error, clearMessage = true)
+            return
+        }
+
+        resolvedAccess.value = null
+        loadedNodes.value = emptyList()
+        isAuthenticated.value = persistedToken.length == REQUIRED_TOKEN_LENGTH
+        authError.value = null
+        message.value = error.message ?: ACCESS_NOT_READY_MESSAGE
+    }
+
+    private fun handleUnauthenticatedFailure(error: Throwable) {
+        resolvedAccess.value = null
+        loadedNodes.value = emptyList()
+        isAuthenticated.value = false
+        pendingAutoConnect.value = false
+        authError.value = error.message ?: INVALID_TOKEN_MESSAGE
+        message.value = null
+    }
+
+    private suspend fun invalidateSession(
+        error: Throwable,
+        clearMessage: Boolean = false
+    ) {
+        vpnRepository.clearSession()
+        resolvedAccess.value = null
+        loadedNodes.value = emptyList()
+        isAuthenticated.value = false
+        pendingAutoConnect.value = false
+        authError.value = error.message ?: INVALID_TOKEN_MESSAGE
+        authTokenInput.value = ""
+        message.value = if (clearMessage) null else message.value
+    }
+
+    private fun isInvalidSessionFailure(error: Throwable): Boolean {
+        return error is InvalidTokenException || error is NoActiveAccessException
+    }
+
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
-        const val INVALID_TOKEN_MESSAGE = "некорретный токен"
+        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
+        const val ACCESS_NOT_READY_MESSAGE = "доступ еще не готов"
     }
 }

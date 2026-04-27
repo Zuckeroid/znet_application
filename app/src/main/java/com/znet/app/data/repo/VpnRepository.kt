@@ -8,7 +8,9 @@ import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AccessNotReadyException
 import com.znet.app.data.remote.DeviceRegistrationData
+import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
 import com.znet.app.vpn.ZnetVpnService
@@ -52,7 +54,7 @@ class VpnRepository(
         return runCatching {
             val prefs = preferencesRepository.preferences.first()
             val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
-            val sessionToken = prefs.authToken.trim().ifBlank { prefs.deviceToken.trim() }
+            val sessionToken = prefs.deviceToken.trim().ifBlank { prefs.authToken.trim() }
 
             require(sessionToken.isNotBlank()) { "токен не найден" }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
@@ -70,6 +72,10 @@ class VpnRepository(
                 fallbackToken = sessionToken
             )
         }
+    }
+
+    suspend fun clearSession() {
+        preferencesRepository.clearAuthSession()
     }
 
     suspend fun loadInstalledApps(): List<InstalledApp> = withContext(Dispatchers.Default) {
@@ -168,12 +174,21 @@ class VpnRepository(
     }
 
     private fun resolveNodeAccess(access: TokenAccessResponse): ResolvedNodeAccess {
-        require(access.connectionReady != false) { "доступ еще не готов" }
+        if (access.hasActiveAccess == false) {
+            throw NoActiveAccessException("у токена нет активного доступа")
+        }
+        if (access.connectionReady == false) {
+            throw AccessNotReadyException(ACCESS_NOT_READY_MESSAGE)
+        }
+        if (access.xrayConfig.isNullOrBlank()) {
+            throw AccessNotReadyException(ACCESS_NOT_READY_MESSAGE)
+        }
         return NodeLinkConfigFactory.fromTokenAccess(access)
     }
 
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
-        const val INVALID_TOKEN_MESSAGE = "некорретный токен"
+        const val INVALID_TOKEN_MESSAGE = "некорректный токен"
+        const val ACCESS_NOT_READY_MESSAGE = "доступ еще не готов"
     }
 }
