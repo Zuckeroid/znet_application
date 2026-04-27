@@ -81,6 +81,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.znet.app.BuildConfig
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.viewmodel.MainUiState
 import com.znet.app.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
@@ -750,9 +751,33 @@ private fun SettingsScreen(
             }
         }
 
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Политики оркестратора", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Routing: ${formatRoutingPolicy(state)}",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Auto-off: ${state.automationPolicy.autoDisconnectApps.size} приложений",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Auto-on: ${state.automationPolicy.autoConnectApps.size} приложений",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+            }
+        }
+
         Text("Приложения", color = Color.White, fontWeight = FontWeight.SemiBold)
         Text(
-            "Split tunnel: приложение работает без VPN. Auto-off: VPN отключается при запуске приложения.",
+            "Split tunnel: приложение работает без VPN. Auto-off: VPN отключается при запуске приложения. Политики сверху приходят из оркестратора.",
             color = Color(0xFF92A6B6),
             fontSize = 12.sp
         )
@@ -760,6 +785,10 @@ private fun SettingsScreen(
         state.installedApps.take(80).forEach { app ->
             val splitEnabled = state.splitTunnelApps.contains(app.packageName)
             val autoEnabled = state.autoDisconnectApps.contains(app.packageName)
+            val policyRoutesApp =
+                state.routingPolicy.normalizedMode == AppRoutingPolicy.MODE_SELECTED_APPS &&
+                    state.routingPolicy.includedApps.contains(app.packageName)
+            val policyAutoOff = state.automationPolicy.autoDisconnectApps.contains(app.packageName)
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF071019)),
                 shape = RoundedCornerShape(12.dp),
@@ -779,6 +808,16 @@ private fun SettingsScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (policyRoutesApp || policyAutoOff) {
+                        Text(
+                            text = listOfNotNull(
+                                if (policyRoutesApp) "routing policy" else null,
+                                if (policyAutoOff) "auto-off policy" else null
+                            ).joinToString(" / "),
+                            color = NeonGreen,
+                            fontSize = 11.sp
+                        )
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = splitEnabled, onCheckedChange = { onToggleSplit(app.packageName) })
@@ -791,6 +830,16 @@ private fun SettingsScreen(
             }
         }
 
+    }
+}
+
+private fun formatRoutingPolicy(state: MainUiState): String {
+    return when (state.routingPolicy.normalizedMode) {
+        AppRoutingPolicy.MODE_SELECTED_APPS ->
+            "${state.routingPolicy.includedApps.size} приложений через VPN"
+        AppRoutingPolicy.MODE_ALL_EXCEPT ->
+            "все, кроме ${state.routingPolicy.excludedApps.size}"
+        else -> "все приложения"
     }
 }
 

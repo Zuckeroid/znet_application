@@ -1,6 +1,8 @@
 ﻿package com.znet.app.data.repo
 
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AppAutomationPolicy
+import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.data.remote.TokenAccessResponse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -18,6 +20,8 @@ data class ResolvedNodeAccess(
     val node: ServerNode,
     val xrayConfig: String,
     val protocol: String? = null,
+    val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
+    val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
@@ -32,6 +36,8 @@ object NodeLinkConfigFactory {
             node = buildNode(access, null),
             xrayConfig = normalizeRuntimeConfig(runtimeConfig),
             protocol = access.connectionProtocol,
+            routingPolicy = access.routingPolicy,
+            automationPolicy = access.automationPolicy,
             serviceTitle = access.serviceTitle,
             serviceExpiresAt = access.serviceExpiresAt,
             serviceDaysRemaining = access.serviceDaysRemaining

@@ -34,7 +34,8 @@ class ZnetVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var monitorJobActive = false
-    private var splitTunnelApps: Set<String> = emptySet()
+    private var allowedApps: Set<String> = emptySet()
+    private var disallowedApps: Set<String> = emptySet()
     private var autoDisconnectApps: Set<String> = emptySet()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -42,7 +43,8 @@ class ZnetVpnService : VpnService() {
             ACTION_CONNECT -> {
                 val nodeJson = intent.getStringExtra(EXTRA_NODE).orEmpty()
                 val xrayConfig = intent.getStringExtra(EXTRA_XRAY_CONFIG).orEmpty()
-                val splitApps = intent.getStringArrayExtra(EXTRA_SPLIT_TUNNEL_APPS)?.toSet().orEmpty()
+                val allowedApps = intent.getStringArrayExtra(EXTRA_ALLOWED_APPS)?.toSet().orEmpty()
+                val disallowedApps = intent.getStringArrayExtra(EXTRA_SPLIT_TUNNEL_APPS)?.toSet().orEmpty()
                 val autoApps = intent.getStringArrayExtra(EXTRA_AUTO_DISCONNECT_APPS)?.toSet().orEmpty()
                 val latency = intent.getLongExtra(EXTRA_LATENCY_MS, -1L)
 
@@ -68,7 +70,7 @@ class ZnetVpnService : VpnService() {
                     }
 
                 serviceScope.launch {
-                    connect(node, xrayConfig, splitApps, autoApps, latency)
+                    connect(node, xrayConfig, allowedApps, disallowedApps, autoApps, latency)
                 }
             }
 
@@ -94,7 +96,8 @@ class ZnetVpnService : VpnService() {
     private suspend fun connect(
         node: ServerNode,
         xrayConfig: String,
-        splitApps: Set<String>,
+        allowedApps: Set<String>,
+        disallowedApps: Set<String>,
         autoApps: Set<String>,
         latencyMs: Long
     ) {
@@ -109,9 +112,13 @@ class ZnetVpnService : VpnService() {
             }
             startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
 
-            splitTunnelApps = splitApps
+            this.allowedApps = allowedApps
+            this.disallowedApps = disallowedApps
             autoDisconnectApps = autoApps
-            establishTun(splitTunnelApps)
+            establishTun(
+                allowedApps = this.allowedApps,
+                disallowedApps = this.disallowedApps
+            )
             xrayEngine.ensureReady()
             xrayEngine.start(xrayConfig, vpnInterface)
             startAppMonitor()
@@ -139,7 +146,10 @@ class ZnetVpnService : VpnService() {
         }
     }
 
-    private fun establishTun(disallowedApps: Set<String>) {
+    private fun establishTun(
+        allowedApps: Set<String>,
+        disallowedApps: Set<String>
+    ) {
         vpnInterface?.close()
 
         val builder = Builder()
@@ -150,9 +160,29 @@ class ZnetVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
 
-        (disallowedApps + packageName).forEach { blockedPackage ->
-            runCatching {
-                builder.addDisallowedApplication(blockedPackage)
+        if (allowedApps.isNotEmpty()) {
+            var acceptedAllowedApps = 0
+            allowedApps
+                .filterNot { allowedPackage -> allowedPackage == packageName }
+                .forEach { allowedPackage ->
+                    runCatching {
+                        builder.addAllowedApplication(allowedPackage)
+                        acceptedAllowedApps += 1
+                    }.onFailure { error ->
+                        Log.w(TAG, "Allowed app is unavailable: $allowedPackage", error)
+                    }
+                }
+
+            if (acceptedAllowedApps == 0) {
+                error("Routing policy has no installed allowed applications")
+            }
+        } else {
+            (disallowedApps + packageName).forEach { blockedPackage ->
+                runCatching {
+                    builder.addDisallowedApplication(blockedPackage)
+                }.onFailure { error ->
+                    Log.w(TAG, "Disallowed app is unavailable: $blockedPackage", error)
+                }
             }
         }
 
@@ -254,6 +284,7 @@ class ZnetVpnService : VpnService() {
 
         const val EXTRA_NODE = "extra_node"
         const val EXTRA_XRAY_CONFIG = "extra_xray_config"
+        const val EXTRA_ALLOWED_APPS = "extra_allowed_apps"
         const val EXTRA_SPLIT_TUNNEL_APPS = "extra_split_tunnel_apps"
         const val EXTRA_AUTO_DISCONNECT_APPS = "extra_auto_disconnect_apps"
         const val EXTRA_LATENCY_MS = "extra_latency_ms"

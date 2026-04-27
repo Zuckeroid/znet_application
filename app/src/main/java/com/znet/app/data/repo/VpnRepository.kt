@@ -9,6 +9,8 @@ import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
 import com.znet.app.data.remote.AccessNotReadyException
+import com.znet.app.data.remote.AppAutomationPolicy
+import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.data.remote.DeviceRegistrationData
 import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
@@ -96,16 +98,31 @@ class VpnRepository(
     fun startVpn(
         node: ServerNode,
         xrayConfig: String,
+        routingPolicy: AppRoutingPolicy,
         splitTunnelApps: Set<String>,
+        automationPolicy: AppAutomationPolicy,
         autoDisconnectApps: Set<String>,
         latencyMs: Long
     ) {
+        val allowedApps = routingAllowedApps(
+            routingPolicy = routingPolicy,
+            userExcludedApps = splitTunnelApps
+        )
+        val disallowedApps = routingDisallowedApps(
+            routingPolicy = routingPolicy,
+            userExcludedApps = splitTunnelApps,
+            allowedApps = allowedApps
+        )
+        val effectiveAutoDisconnectApps =
+            (automationPolicy.autoDisconnectApps + autoDisconnectApps).normalizePackageSet()
+
         val intent = Intent(context, ZnetVpnService::class.java).apply {
             action = ZnetVpnService.ACTION_CONNECT
             putExtra(ZnetVpnService.EXTRA_NODE, json.encodeToString(node))
             putExtra(ZnetVpnService.EXTRA_XRAY_CONFIG, xrayConfig)
-            putExtra(ZnetVpnService.EXTRA_SPLIT_TUNNEL_APPS, splitTunnelApps.toTypedArray())
-            putExtra(ZnetVpnService.EXTRA_AUTO_DISCONNECT_APPS, autoDisconnectApps.toTypedArray())
+            putExtra(ZnetVpnService.EXTRA_ALLOWED_APPS, allowedApps.toTypedArray())
+            putExtra(ZnetVpnService.EXTRA_SPLIT_TUNNEL_APPS, disallowedApps.toTypedArray())
+            putExtra(ZnetVpnService.EXTRA_AUTO_DISCONNECT_APPS, effectiveAutoDisconnectApps.toTypedArray())
             putExtra(ZnetVpnService.EXTRA_LATENCY_MS, latencyMs)
         }
         context.startForegroundService(intent)
@@ -178,6 +195,45 @@ class VpnRepository(
             throw AccessNotReadyException(ACCESS_NOT_READY_MESSAGE)
         }
         return NodeLinkConfigFactory.fromTokenAccess(access)
+    }
+
+    private fun routingAllowedApps(
+        routingPolicy: AppRoutingPolicy,
+        userExcludedApps: Set<String>
+    ): Set<String> {
+        if (routingPolicy.normalizedMode != AppRoutingPolicy.MODE_SELECTED_APPS) {
+            return emptySet()
+        }
+
+        val excluded = userExcludedApps.normalizePackageSet() + context.packageName
+        return routingPolicy.includedApps
+            .normalizePackageSet()
+            .filterNot { packageName -> excluded.contains(packageName) }
+            .toSet()
+    }
+
+    private fun routingDisallowedApps(
+        routingPolicy: AppRoutingPolicy,
+        userExcludedApps: Set<String>,
+        allowedApps: Set<String>
+    ): Set<String> {
+        if (allowedApps.isNotEmpty()) {
+            return emptySet()
+        }
+
+        val policyExcluded = when (routingPolicy.normalizedMode) {
+            AppRoutingPolicy.MODE_ALL_EXCEPT -> routingPolicy.excludedApps
+            AppRoutingPolicy.MODE_ALL_APPS -> routingPolicy.excludedApps
+            else -> emptySet()
+        }
+
+        return (policyExcluded + userExcludedApps).normalizePackageSet()
+    }
+
+    private fun Iterable<String>.normalizePackageSet(): Set<String> {
+        return map { item -> item.trim() }
+            .filter { item -> item.isNotBlank() }
+            .toSet()
     }
 
     private companion object {

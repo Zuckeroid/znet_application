@@ -12,6 +12,8 @@ import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AppAutomationPolicy
+import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.data.remote.AccessNotReadyException
 import com.znet.app.data.remote.InvalidTokenException
 import com.znet.app.data.remote.NoActiveAccessException
@@ -36,6 +38,8 @@ data class MainUiState(
     val installedApps: List<InstalledApp> = emptyList(),
     val splitTunnelApps: Set<String> = emptySet(),
     val autoDisconnectApps: Set<String> = emptySet(),
+    val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
+    val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val adaptiveEnabled: Boolean = true,
     val latencyMs: Long = -1,
     val protocol: String? = null,
@@ -109,6 +113,8 @@ class MainViewModel(
             installedApps = apps,
             splitTunnelApps = prefs.splitTunnelApps,
             autoDisconnectApps = prefs.autoDisconnectApps,
+            routingPolicy = access?.routingPolicy ?: AppRoutingPolicy(),
+            automationPolicy = access?.automationPolicy ?: AppAutomationPolicy(),
             adaptiveEnabled = prefs.adaptiveEnabled,
             latencyMs = status.latencyMs,
             protocol = access?.protocol,
@@ -330,7 +336,9 @@ class MainViewModel(
                     vpnRepository.startVpn(
                         node = access.node,
                         xrayConfig = access.xrayConfig,
+                        routingPolicy = access.routingPolicy,
                         splitTunnelApps = prefs.splitTunnelApps,
+                        automationPolicy = access.automationPolicy,
                         autoDisconnectApps = prefs.autoDisconnectApps,
                         latencyMs = -1L
                     )

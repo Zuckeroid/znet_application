@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -109,6 +110,14 @@ class OrchestratorClient(
         val access = payload.objectOrNull("access") ?: result?.objectOrNull("access") ?: root.objectOrNull("access")
         val connection = payload.objectOrNull("connection") ?: result?.objectOrNull("connection") ?: root.objectOrNull("connection")
         val service = payload.objectOrNull("service") ?: result?.objectOrNull("service") ?: root.objectOrNull("service")
+        val routingPolicy = connection?.objectOrNull("routing_policy", "routingPolicy")
+            ?: payload.objectOrNull("routing_policy", "routingPolicy")
+            ?: result?.objectOrNull("routing_policy", "routingPolicy")
+            ?: root.objectOrNull("routing_policy", "routingPolicy")
+        val automationPolicy = connection?.objectOrNull("automation_policy", "automationPolicy")
+            ?: payload.objectOrNull("automation_policy", "automationPolicy")
+            ?: result?.objectOrNull("automation_policy", "automationPolicy")
+            ?: root.objectOrNull("automation_policy", "automationPolicy")
 
         val device = app?.objectOrNull("device")
         val deviceToken = app?.stringOrNull("token", "device_token", "deviceToken")
@@ -170,6 +179,8 @@ class OrchestratorClient(
             hasActiveAccess = hasActiveAccess,
             connectionReady = connection?.booleanOrNull("ready"),
             connectionProtocol = connection?.stringOrNull("protocol"),
+            routingPolicy = parseRoutingPolicy(routingPolicy),
+            automationPolicy = parseAutomationPolicy(automationPolicy),
             serviceTitle = service?.stringOrNull("title", "name"),
             serviceExpiresAt = service?.stringOrNull("expires_at", "expiresAt"),
             serviceDaysRemaining = service?.intOrNull("days_remaining", "daysRemaining")
@@ -226,8 +237,76 @@ class OrchestratorClient(
         return null
     }
 
+    private fun parseRoutingPolicy(policy: JsonObject?): AppRoutingPolicy {
+        if (policy == null) {
+            return AppRoutingPolicy()
+        }
+
+        return AppRoutingPolicy(
+            mode = policy.stringOrNull("mode") ?: AppRoutingPolicy.MODE_ALL_APPS,
+            includedApps = policy.stringSetOrNull(
+                "includedApps",
+                "included_apps",
+                "default_enabled_apps"
+            ),
+            excludedApps = policy.stringSetOrNull(
+                "excludedApps",
+                "excluded_apps",
+                "default_excluded_apps"
+            )
+        )
+    }
+
+    private fun parseAutomationPolicy(policy: JsonObject?): AppAutomationPolicy {
+        if (policy == null) {
+            return AppAutomationPolicy()
+        }
+
+        return AppAutomationPolicy(
+            autoConnectApps = policy.stringSetOrNull(
+                "autoConnectApps",
+                "auto_connect_apps",
+                "auto_enable_apps"
+            ),
+            autoDisconnectApps = policy.stringSetOrNull(
+                "autoDisconnectApps",
+                "auto_disconnect_apps",
+                "auto_disable_apps"
+            ),
+            requiresUsageAccess = policy.booleanOrNull("requiresUsageAccess", "requires_usage_access") ?: false
+        )
+    }
+
+    private fun JsonObject.stringSetOrNull(vararg keys: String): Set<String> {
+        keys.forEach { key ->
+            val element = this[key] ?: return@forEach
+            val values = when (element) {
+                is JsonArray -> element.mapNotNull { item ->
+                    (item as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+                }
+                is JsonPrimitive -> element.contentOrNull
+                    ?.split(',', '\n', '\r')
+                    ?.mapNotNull { item -> item.trim().takeIf { it.isNotBlank() } }
+                    .orEmpty()
+                else -> emptyList()
+            }
+
+            if (values.isNotEmpty()) {
+                return values.toSet()
+            }
+        }
+
+        return emptySet()
+    }
+
     private fun JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
     private fun JsonObject.objectOrNull(key: String): JsonObject? = this[key].asObjectOrNull()
+    private fun JsonObject.objectOrNull(vararg keys: String): JsonObject? {
+        keys.forEach { key ->
+            this[key].asObjectOrNull()?.let { return it }
+        }
+        return null
+    }
 
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
@@ -264,9 +343,32 @@ data class TokenAccessResponse(
     val hasActiveAccess: Boolean? = null,
     val connectionReady: Boolean? = null,
     val connectionProtocol: String? = null,
+    val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
+    val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
+)
+
+data class AppRoutingPolicy(
+    val mode: String = MODE_ALL_APPS,
+    val includedApps: Set<String> = emptySet(),
+    val excludedApps: Set<String> = emptySet()
+) {
+    val normalizedMode: String
+        get() = mode.trim().lowercase().ifBlank { MODE_ALL_APPS }
+
+    companion object {
+        const val MODE_SELECTED_APPS = "selected_apps"
+        const val MODE_ALL_EXCEPT = "all_except"
+        const val MODE_ALL_APPS = "all_apps"
+    }
+}
+
+data class AppAutomationPolicy(
+    val autoConnectApps: Set<String> = emptySet(),
+    val autoDisconnectApps: Set<String> = emptySet(),
+    val requiresUsageAccess: Boolean = false
 )
 
 open class TokenAuthException(message: String) : IllegalStateException(message)
