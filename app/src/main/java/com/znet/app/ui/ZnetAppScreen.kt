@@ -145,6 +145,26 @@ fun ZnetAppScreen(
         viewModel.consumeAutoConnectRequest()
     }
 
+    val showSessionRestore = !state.isAuthenticated &&
+        state.authInProgress &&
+        state.authError.isNullOrBlank() &&
+        state.authTokenInput.trim().length == AUTH_TOKEN_LENGTH
+
+    if (showSessionRestore) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = Color(0xFF02070C),
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { padding ->
+            SessionRestoreScreen(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        }
+        return
+    }
+
     if (!state.isAuthenticated) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -247,6 +267,40 @@ fun ZnetAppScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SessionRestoreScreen(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFF01050A), Color(0xFF052313), Color(0xFF01050A))
+                )
+            )
+            .padding(horizontal = 20.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(
+            color = NeonGreen,
+            strokeWidth = 2.5.dp
+        )
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+            text = "Проверяем доступ устройства",
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Входить заново не нужно",
+            color = Color(0xFF9EB0BE)
+        )
     }
 }
 
@@ -479,9 +533,20 @@ private fun HomeScreen(
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
-                    text = if (node == null) "Сервер не выбран" else "Сервер: ${node.flagEmoji} ${node.country}, ${node.city}",
+                    text = if (node == null) {
+                        "Нода не выбрана"
+                    } else {
+                        "Нода: ${node.flagEmoji} ${node.name}"
+                    },
                     color = Color(0xFFB6C4CE)
                 )
+                if (node != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = node.country,
+                        color = Color(0xFF90A4B5)
+                    )
+                }
                 if (state.latencyMs >= 0) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -588,7 +653,7 @@ private fun NodeCard(
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(node.name, color = Color.White, fontWeight = FontWeight.Medium)
-                Text("${node.country}, ${node.city}", color = Color(0xFF90A4B5))
+                Text("${node.flagEmoji} ${node.country}", color = Color(0xFF90A4B5))
             }
             if (selected) {
                 Text("Выбран", color = Color(0xFF4BFF68), fontWeight = FontWeight.Bold)
