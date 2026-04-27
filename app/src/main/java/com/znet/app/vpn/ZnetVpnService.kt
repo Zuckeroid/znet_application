@@ -29,7 +29,7 @@ import android.app.usage.UsageStatsManager
 class ZnetVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val xrayEngine by lazy { ProcessXrayEngine(this) }
+    private val xrayEngine by lazy { Libv2rayEngine(this) }
     private val json by lazy { Json { ignoreUnknownKeys = true } }
 
     private var vpnInterface: ParcelFileDescriptor? = null

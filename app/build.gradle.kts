@@ -72,6 +72,8 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
 
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
