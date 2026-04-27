@@ -1,6 +1,7 @@
 package com.znet.app.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -69,6 +70,7 @@ class MainViewModel(
     private val authInProgress = MutableStateFlow(false)
     private val pendingAutoConnect = MutableStateFlow(false)
     private val resolvedAccess = MutableStateFlow<ResolvedNodeAccess?>(null)
+    private val sessionValidationInProgress = MutableStateFlow(false)
 
     private val baseUiState = combine(
         preferencesRepository.preferences,
@@ -180,6 +182,38 @@ class MainViewModel(
     fun submitAuth() {
         viewModelScope.launch {
             submitTokenAuth()
+        }
+    }
+
+    fun validateDeviceSessionOnForeground() {
+        viewModelScope.launch {
+            if (sessionRestoreInProgress.value || sessionValidationInProgress.value || authInProgress.value) {
+                return@launch
+            }
+
+            val sessionToken = currentSessionToken()
+            if (sessionToken.length != REQUIRED_TOKEN_LENGTH) {
+                if (isAuthenticated.value) {
+                    invalidateSession(InvalidTokenException(INVALID_TOKEN_MESSAGE), clearMessage = true)
+                }
+                return@launch
+            }
+
+            sessionValidationInProgress.value = true
+            Log.d(TAG, "Validating persisted device session on foreground")
+            val validation = vpnRepository.refreshAccessBundle()
+            validation.fold(
+                onSuccess = { access ->
+                    applyAuthenticatedAccess(
+                        access = access,
+                        autoConnect = false
+                    )
+                },
+                onFailure = { error ->
+                    handleForegroundValidationFailure(error)
+                }
+            )
+            sessionValidationInProgress.value = false
         }
     }
 
@@ -346,6 +380,25 @@ class MainViewModel(
         enterAuthenticatedPendingState(error)
     }
 
+    private suspend fun handleForegroundValidationFailure(error: Throwable) {
+        if (isInvalidSessionFailure(error)) {
+            invalidateSession(error, clearMessage = true)
+            return
+        }
+
+        if (error is AccessNotReadyException && !isAuthenticated.value) {
+            invalidateSession(error, clearMessage = true)
+            return
+        }
+
+        if (error is AccessNotReadyException) {
+            enterAuthenticatedPendingState(error)
+            return
+        }
+
+        message.value = error.message ?: "Failed to refresh access"
+    }
+
     private suspend fun handleAuthenticationFailure(error: Throwable) {
         val sessionToken = currentSessionToken()
         if (error is AccessNotReadyException && sessionToken.length == REQUIRED_TOKEN_LENGTH) {
@@ -392,6 +445,7 @@ class MainViewModel(
         error: Throwable,
         clearMessage: Boolean = false
     ) {
+        vpnRepository.stopVpn()
         vpnRepository.clearSession()
         resolvedAccess.value = null
         loadedNodes.value = emptyList()
@@ -408,6 +462,7 @@ class MainViewModel(
     }
 
     private companion object {
+        const val TAG = "MainViewModel"
         const val REQUIRED_TOKEN_LENGTH = 32
         const val INVALID_TOKEN_MESSAGE = "Invalid token"
         const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
