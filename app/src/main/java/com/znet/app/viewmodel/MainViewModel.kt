@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.znet.app.AppContainer
-import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferences
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.ConnectionState
@@ -36,17 +35,9 @@ data class MainUiState(
     val latencyMs: Long = -1,
     val rxBytes: Long = 0,
     val txBytes: Long = 0,
-    val manualVlessLink: String = "",
-    val deviceToken: String = "",
-    val hasActiveAccess: String = "",
-    val activeSubscriptionLinks: String = "",
-    val filteredSubscriptionLinks: String = "",
-    val selectedSubscriptionLink: String = "",
     val isAuthenticated: Boolean = false,
     val authTokenInput: String = "",
     val authError: String? = null,
-    val debugApiResponse: String? = null,
-    val isDebugMode: Boolean = false,
     val authInProgress: Boolean = false,
     val pendingAutoConnect: Boolean = false,
     val isBusy: Boolean = false,
@@ -67,7 +58,6 @@ class MainViewModel(
 
     private val authTokenInput = MutableStateFlow("")
     private val authError = MutableStateFlow<String?>(null)
-    private val debugApiResponse = MutableStateFlow<String?>(null)
 
     private val authInProgress = MutableStateFlow(false)
     private val pendingAutoConnect = MutableStateFlow(false)
@@ -82,7 +72,6 @@ class MainViewModel(
         isAuthenticated,
         authTokenInput,
         authError,
-        debugApiResponse,
         authInProgress,
         pendingAutoConnect
     ) { values ->
@@ -94,9 +83,8 @@ class MainViewModel(
         val authenticated = values[5] as Boolean
         val tokenInput = values[6] as String
         val currentAuthError = values[7] as String?
-        val currentDebugApiResponse = values[8] as String?
-        val authorizing = values[9] as Boolean
-        val shouldAutoConnect = values[10] as Boolean
+        val authorizing = values[8] as Boolean
+        val shouldAutoConnect = values[9] as Boolean
 
         val selectedNode = nodes.firstOrNull { it.id == prefs.selectedNodeId } ?: status.currentNode
         MainUiState(
@@ -111,17 +99,9 @@ class MainViewModel(
             latencyMs = status.latencyMs,
             rxBytes = status.rxBytes,
             txBytes = status.txBytes,
-            manualVlessLink = prefs.manualVlessLink,
-            deviceToken = prefs.deviceToken,
-            hasActiveAccess = prefs.hasActiveAccess,
-            activeSubscriptionLinks = prefs.activeSubscriptionLinks,
-            filteredSubscriptionLinks = prefs.filteredSubscriptionLinks,
-            selectedSubscriptionLink = prefs.selectedSubscriptionLink,
             isAuthenticated = authenticated,
             authTokenInput = tokenInput,
             authError = currentAuthError,
-            debugApiResponse = currentDebugApiResponse,
-            isDebugMode = BuildConfig.DEBUG,
             authInProgress = authorizing,
             pendingAutoConnect = shouldAutoConnect,
             isBusy = isBusyValue,
@@ -154,7 +134,6 @@ class MainViewModel(
                         preferencesRepository.setSelectedNode(access.node.id)
                         isAuthenticated.value = true
                         authError.value = null
-                        debugApiResponse.value = null
                         message.value = null
                     },
                     onFailure = {
@@ -199,9 +178,6 @@ class MainViewModel(
     fun updateAuthTokenInput(value: String) {
         authTokenInput.value = value
         authError.value = null
-        if (BuildConfig.DEBUG) {
-            debugApiResponse.value = null
-        }
     }
 
     fun submitAuth() {
@@ -214,26 +190,11 @@ class MainViewModel(
         val token = authTokenInput.value.trim()
         if (token.isBlank() || token.length != REQUIRED_TOKEN_LENGTH) {
             authError.value = INVALID_TOKEN_MESSAGE
-            debugApiResponse.value = null
             return
         }
 
         authError.value = null
         authInProgress.value = true
-
-        if (BuildConfig.DEBUG) {
-            val debugResult = vpnRepository.fetchTokenDebugResponse(token)
-            debugResult.fold(
-                onSuccess = { raw ->
-                    debugApiResponse.value = raw.ifBlank { "<empty response>" }
-                    authError.value = null
-                },
-                onFailure = { err ->
-                    debugApiResponse.value = err.message ?: "request failed"
-                    authError.value = INVALID_TOKEN_MESSAGE
-                }
-            )
-        }
 
         val result = vpnRepository.authenticateWithToken(token = token)
         result.fold(
@@ -244,21 +205,13 @@ class MainViewModel(
                 isAuthenticated.value = true
                 pendingAutoConnect.value = true
                 authError.value = null
-                debugApiResponse.value = null
                 message.value = null
             },
             onFailure = {
                 resolvedAccess.value = null
-                if (BuildConfig.DEBUG) {
-                    // In debug mode we allow entering the main screen right after token input.
-                    isAuthenticated.value = true
-                    pendingAutoConnect.value = false
-                    authError.value = null
-                } else {
-                    isAuthenticated.value = false
-                    pendingAutoConnect.value = false
-                    authError.value = INVALID_TOKEN_MESSAGE
-                }
+                isAuthenticated.value = false
+                pendingAutoConnect.value = false
+                authError.value = INVALID_TOKEN_MESSAGE
             }
         )
         authInProgress.value = false
@@ -266,13 +219,6 @@ class MainViewModel(
 
     fun consumeAutoConnectRequest() {
         pendingAutoConnect.value = false
-    }
-
-    fun saveManualVlessLink(link: String) {
-        viewModelScope.launch {
-            preferencesRepository.setManualVlessLink(link.trim())
-            message.value = "VLESS link saved"
-        }
     }
 
     fun selectNode(nodeId: String) {
@@ -313,32 +259,6 @@ class MainViewModel(
     fun connect() {
         viewModelScope.launch {
             val prefs: UserPreferences = preferencesRepository.preferences.first()
-            val manualVlessLink = prefs.manualVlessLink.trim()
-            if (manualVlessLink.isNotBlank()) {
-                busy.value = true
-                val resolved = vpnRepository.resolveManualVlessLink(manualVlessLink)
-                resolved.fold(
-                    onSuccess = { access ->
-                        resolvedAccess.value = access
-                        loadedNodes.value = listOf(access.node)
-                        preferencesRepository.setSelectedNode(access.node.id)
-                        vpnRepository.startVpn(
-                            node = access.node,
-                            xrayConfig = access.xrayConfig,
-                            splitTunnelApps = prefs.splitTunnelApps,
-                            autoDisconnectApps = prefs.autoDisconnectApps,
-                            latencyMs = -1L
-                        )
-                        message.value = null
-                    },
-                    onFailure = {
-                        message.value = "Invalid VLESS link"
-                    }
-                )
-                busy.value = false
-                return@launch
-            }
-
             if (!isAuthenticated.value) {
                 val persistedToken = prefs.authToken.ifBlank { prefs.deviceToken }
                 if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {

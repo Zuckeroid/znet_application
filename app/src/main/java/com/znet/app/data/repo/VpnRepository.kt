@@ -24,43 +24,6 @@ class VpnRepository(
     private val orchestratorClient: OrchestratorClient,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
-    fun resolveManualVlessLink(link: String): Result<ResolvedNodeAccess> {
-        return runCatching {
-            val cleanLink = link.trim()
-            require(cleanLink.isNotBlank()) { "VLESS link is empty" }
-            require(cleanLink.startsWith("vless://", ignoreCase = true)) { "Invalid VLESS link" }
-            NodeLinkConfigFactory.fromTokenAccess(
-                TokenAccessResponse(
-                    nodeLink = cleanLink,
-                    xrayConfig = null,
-                    nodeId = null,
-                    nodeName = "Manual VLESS",
-                    country = "Custom",
-                    city = "User link",
-                    flagEmoji = "GL",
-                    issuedToken = null,
-                    orchestratorBaseUrl = null
-                )
-            )
-        }
-    }
-
-    suspend fun fetchTokenDebugResponse(token: String): Result<String> {
-        return runCatching {
-            val cleanToken = token.trim()
-            val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
-
-            require(cleanToken.isNotBlank()) { INVALID_TOKEN_MESSAGE }
-            require(cleanToken.length == REQUIRED_TOKEN_LENGTH) { INVALID_TOKEN_MESSAGE }
-            require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
-
-            orchestratorClient.requestTokenAuthRaw(
-                baseUrl = authBaseUrl,
-                token = cleanToken
-            ).getOrThrow()
-        }
-    }
-
     suspend fun authenticateWithToken(token: String): Result<ResolvedNodeAccess> {
         return runCatching {
             val cleanToken = token.trim()
@@ -191,6 +154,7 @@ class VpnRepository(
             ?: fallbackToken
 
         preferencesRepository.setOrchestrator(authBaseUrl, sessionToken)
+        preferencesRepository.clearManualVlessLink()
         preferencesRepository.setTokenAuthMetadata(
             deviceToken = access.deviceToken,
             hasActiveAccess = access.hasActiveAccess,

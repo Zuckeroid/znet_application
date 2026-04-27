@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.znet.app.BuildConfig
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.model.ServerNode
 import com.znet.app.viewmodel.MainUiState
@@ -234,7 +235,6 @@ fun ZnetAppScreen(
             BottomTab.Settings -> {
                 SettingsScreen(
                     state = state,
-                    onSaveVless = viewModel::saveManualVlessLink,
                     onAdaptiveChanged = viewModel::toggleAdaptive,
                     onToggleSplit = viewModel::toggleSplitTunnel,
                     onToggleAuto = viewModel::toggleAutoDisconnect,
@@ -360,19 +360,6 @@ private fun TokenAuthScreen(
                     } else {
                         Text("Sign in")
                     }
-                }
-                if (state.isDebugMode && !state.debugApiResponse.isNullOrBlank()) {
-                    Text(
-                        text = "DEBUG API RESPONSE:",
-                        color = Color(0xFF7FE890),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = state.debugApiResponse,
-                        color = Color(0xFFCFE7D4),
-                        fontSize = 12.sp
-                    )
                 }
             }
         }
@@ -613,15 +600,12 @@ private fun NodeCard(
 @Composable
 private fun SettingsScreen(
     state: MainUiState,
-    onSaveVless: (String) -> Unit,
     onAdaptiveChanged: (Boolean) -> Unit,
     onToggleSplit: (String) -> Unit,
     onToggleAuto: (String) -> Unit,
     onOpenUsageSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var vlessLink by remember(state.manualVlessLink) { mutableStateOf(state.manualVlessLink) }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -631,31 +615,6 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Настройки", color = Color.White, style = MaterialTheme.typography.titleLarge)
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = vlessLink,
-                    onValueChange = { vlessLink = it },
-                    label = { Text("VLESS link") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Button(
-                    onClick = { onSaveVless(vlessLink) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NeonButtonBg,
-                        contentColor = NeonGreen
-                    ),
-                    border = BorderStroke(1.2.dp, NeonButtonOutline)
-                ) {
-                    Text("Сохранить VLESS")
-                }
-            }
-        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
@@ -684,6 +643,20 @@ private fun SettingsScreen(
                 ) {
                     Text("Дать доступ Usage Access")
                 }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Подключение", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Приложение получает доступ только через токен из личного кабинета. Добавление устройств и управление ими происходит на стороне биллинга.",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
             }
         }
 
@@ -728,54 +701,6 @@ private fun SettingsScreen(
             }
         }
 
-        Text("Auth payload", color = Color.White, fontWeight = FontWeight.SemiBold)
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = state.deviceToken,
-                    onValueChange = {},
-                    label = { Text("Device token") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    minLines = 1
-                )
-                OutlinedTextField(
-                    value = state.hasActiveAccess,
-                    onValueChange = {},
-                    label = { Text("Has active access") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    minLines = 1
-                )
-                OutlinedTextField(
-                    value = state.activeSubscriptionLinks,
-                    onValueChange = {},
-                    label = { Text("Active subscription links") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    minLines = 2
-                )
-                OutlinedTextField(
-                    value = state.filteredSubscriptionLinks,
-                    onValueChange = {},
-                    label = { Text("Filtered subscriptions") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    minLines = 2
-                )
-                OutlinedTextField(
-                    value = state.selectedSubscriptionLink,
-                    onValueChange = {},
-                    label = { Text("Selected subscription link") },
-                    modifier = Modifier.fillMaxWidth(),
-                    readOnly = true,
-                    minLines = 1
-                )
-            }
-        }
     }
 }
 
@@ -792,4 +717,4 @@ private fun formatBytes(bytes: Long): String {
 }
 
 private const val AUTH_TOKEN_LENGTH = 32
-private const val SIGN_UP_URL = "https://example.com/signup"
+private val SIGN_UP_URL = BuildConfig.AUTH_API_URL.trimEnd('/') + "/signup"

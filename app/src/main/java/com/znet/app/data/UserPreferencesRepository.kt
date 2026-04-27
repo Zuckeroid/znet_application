@@ -98,6 +98,12 @@ class UserPreferencesRepository(
         }
     }
 
+    suspend fun clearManualVlessLink() {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.manualVlessLink] = ""
+        }
+    }
+
     suspend fun setTokenAuthMetadata(
         deviceToken: String?,
         hasActiveAccess: Boolean?,
