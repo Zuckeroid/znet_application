@@ -2,6 +2,7 @@
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -10,6 +11,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.znet.app.BuildConfig
+import com.znet.app.data.remote.AppAutomationPolicy
+import com.znet.app.data.remote.AppRoutingPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -22,8 +25,13 @@ data class UserPreferences(
     val deviceToken: String,
     val deviceId: String,
     val selectedNodeId: String?,
-    val splitTunnelApps: Set<String>,
+    val routingApps: Set<String>,
+    val autoConnectApps: Set<String>,
     val autoDisconnectApps: Set<String>,
+    val routingEnabled: Boolean,
+    val autoConnectEnabled: Boolean,
+    val autoDisconnectEnabled: Boolean,
+    val policyDefaultsApplied: Boolean,
     val adaptiveEnabled: Boolean
 )
 
@@ -42,8 +50,13 @@ class UserPreferencesRepository(
         val selectedSubscriptionLink = stringPreferencesKey("selected_subscription_link")
         val deviceId = stringPreferencesKey("device_id")
         val selectedNodeId = stringPreferencesKey("selected_node_id")
-        val splitTunnelApps = stringSetPreferencesKey("split_tunnel_apps")
+        val routingApps = stringSetPreferencesKey("routing_apps")
+        val autoConnectApps = stringSetPreferencesKey("auto_connect_apps")
         val autoDisconnectApps = stringSetPreferencesKey("auto_disconnect_apps")
+        val routingEnabled = booleanPreferencesKey("routing_enabled")
+        val autoConnectEnabled = booleanPreferencesKey("auto_connect_enabled")
+        val autoDisconnectEnabled = booleanPreferencesKey("auto_disconnect_enabled")
+        val policyDefaultsApplied = booleanPreferencesKey("policy_defaults_applied")
         val adaptiveEnabled = booleanPreferencesKey("adaptive_enabled")
     }
 
@@ -60,8 +73,13 @@ class UserPreferencesRepository(
                 deviceToken = prefs[Keys.deviceToken] ?: "",
                 deviceId = prefs[Keys.deviceId] ?: "",
                 selectedNodeId = prefs[Keys.selectedNodeId]?.takeIf { it.isNotBlank() },
-                splitTunnelApps = prefs[Keys.splitTunnelApps] ?: emptySet(),
+                routingApps = prefs[Keys.routingApps] ?: emptySet(),
+                autoConnectApps = prefs[Keys.autoConnectApps] ?: emptySet(),
                 autoDisconnectApps = prefs[Keys.autoDisconnectApps] ?: emptySet(),
+                routingEnabled = prefs[Keys.routingEnabled] ?: true,
+                autoConnectEnabled = prefs[Keys.autoConnectEnabled] ?: true,
+                autoDisconnectEnabled = prefs[Keys.autoDisconnectEnabled] ?: true,
+                policyDefaultsApplied = prefs[Keys.policyDefaultsApplied] ?: false,
                 adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true
             )
         }
@@ -117,15 +135,39 @@ class UserPreferencesRepository(
         }
     }
 
-    suspend fun setSplitTunnelApps(packages: Set<String>) {
+    suspend fun setRoutingApps(packages: Set<String>) {
         context.userPrefsStore.edit { prefs ->
-            prefs[Keys.splitTunnelApps] = packages
+            prefs[Keys.routingApps] = packages.normalizedPackages()
+        }
+    }
+
+    suspend fun setAutoConnectApps(packages: Set<String>) {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.autoConnectApps] = packages.normalizedPackages()
         }
     }
 
     suspend fun setAutoDisconnectApps(packages: Set<String>) {
         context.userPrefsStore.edit { prefs ->
-            prefs[Keys.autoDisconnectApps] = packages
+            prefs[Keys.autoDisconnectApps] = packages.normalizedPackages()
+        }
+    }
+
+    suspend fun setRoutingEnabled(enabled: Boolean) {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.routingEnabled] = enabled
+        }
+    }
+
+    suspend fun setAutoConnectEnabled(enabled: Boolean) {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.autoConnectEnabled] = enabled
+        }
+    }
+
+    suspend fun setAutoDisconnectEnabled(enabled: Boolean) {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.autoDisconnectEnabled] = enabled
         }
     }
 
@@ -145,6 +187,63 @@ class UserPreferencesRepository(
             prefs[Keys.deviceId] = generated
         }
         return generated
+    }
+
+    suspend fun applyPolicyDefaultsIfNeeded(
+        routingPolicy: AppRoutingPolicy,
+        automationPolicy: AppAutomationPolicy
+    ) {
+        context.userPrefsStore.edit { prefs ->
+            if (prefs[Keys.policyDefaultsApplied] == true) {
+                return@edit
+            }
+
+            applyPolicyDefaults(
+                prefs = prefs,
+                routingPolicy = routingPolicy,
+                automationPolicy = automationPolicy
+            )
+        }
+    }
+
+    suspend fun resetPolicyDefaults(
+        routingPolicy: AppRoutingPolicy,
+        automationPolicy: AppAutomationPolicy
+    ) {
+        context.userPrefsStore.edit { prefs ->
+            applyPolicyDefaults(
+                prefs = prefs,
+                routingPolicy = routingPolicy,
+                automationPolicy = automationPolicy
+            )
+        }
+    }
+
+    private fun applyPolicyDefaults(
+        prefs: MutablePreferences,
+        routingPolicy: AppRoutingPolicy,
+        automationPolicy: AppAutomationPolicy
+    ) {
+        val routingApps = when (routingPolicy.normalizedMode) {
+            AppRoutingPolicy.MODE_SELECTED_APPS -> routingPolicy.includedApps
+            else -> emptySet()
+        }.normalizedPackages()
+        val autoConnectApps = automationPolicy.autoConnectApps.normalizedPackages()
+        val autoDisconnectApps = automationPolicy.autoDisconnectApps.normalizedPackages()
+
+        prefs[Keys.routingApps] = routingApps
+        prefs[Keys.autoConnectApps] = autoConnectApps
+        prefs[Keys.autoDisconnectApps] = autoDisconnectApps
+        prefs[Keys.routingEnabled] = routingApps.isNotEmpty()
+        prefs[Keys.autoConnectEnabled] = autoConnectApps.isNotEmpty()
+        prefs[Keys.autoDisconnectEnabled] = autoDisconnectApps.isNotEmpty()
+        prefs[Keys.policyDefaultsApplied] = true
+    }
+
+    private fun Iterable<String>.normalizedPackages(): Set<String> {
+        return map { item -> item.trim() }
+            .filter { item -> item.isNotBlank() }
+            .toSet()
     }
 
     private companion object {

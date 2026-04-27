@@ -80,6 +80,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.znet.app.BuildConfig
 import com.znet.app.data.model.ConnectionState
+import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
 import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.viewmodel.MainUiState
@@ -269,8 +270,13 @@ fun ZnetAppScreen(
                 SettingsScreen(
                     state = state,
                     onAdaptiveChanged = viewModel::toggleAdaptive,
-                    onToggleSplit = viewModel::toggleSplitTunnel,
-                    onToggleAuto = viewModel::toggleAutoDisconnect,
+                    onToggleRouting = viewModel::toggleRoutingApp,
+                    onToggleAutoConnect = viewModel::toggleAutoConnect,
+                    onToggleAutoDisconnect = viewModel::toggleAutoDisconnect,
+                    onRoutingEnabledChanged = viewModel::setRoutingEnabled,
+                    onAutoConnectEnabledChanged = viewModel::setAutoConnectEnabled,
+                    onAutoDisconnectEnabledChanged = viewModel::setAutoDisconnectEnabled,
+                    onResetPolicies = viewModel::resetAppPoliciesToRecommended,
                     onOpenUsageSettings = {
                         context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -692,11 +698,20 @@ private fun NodeCard(
 private fun SettingsScreen(
     state: MainUiState,
     onAdaptiveChanged: (Boolean) -> Unit,
-    onToggleSplit: (String) -> Unit,
-    onToggleAuto: (String) -> Unit,
+    onToggleRouting: (String) -> Unit,
+    onToggleAutoConnect: (String) -> Unit,
+    onToggleAutoDisconnect: (String) -> Unit,
+    onRoutingEnabledChanged: (Boolean) -> Unit,
+    onAutoConnectEnabledChanged: (Boolean) -> Unit,
+    onAutoDisconnectEnabledChanged: (Boolean) -> Unit,
+    onResetPolicies: () -> Unit,
     onOpenUsageSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val recommendedRoutingApps = recommendedRoutingPackages(state)
+    val recommendedAutoOnApps = state.automationPolicy.autoConnectApps
+    val recommendedAutoOffApps = state.automationPolicy.autoDisconnectApps
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -756,80 +771,160 @@ private fun SettingsScreen(
             shape = RoundedCornerShape(14.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Политики оркестратора", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Политики приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Рекомендации пришли из оркестратора. Дальше это локальные настройки этого телефона.",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
                 Text(
                     "Routing: ${formatRoutingPolicy(state)}",
                     color = Color(0xFF92A6B6),
                     fontSize = 12.sp
                 )
                 Text(
-                    "Auto-off: ${state.automationPolicy.autoDisconnectApps.size} приложений",
+                    "Auto ON: ${recommendedAutoOnApps.size} рекомендовано, Auto OFF: ${recommendedAutoOffApps.size} рекомендовано",
                     color = Color(0xFF92A6B6),
                     fontSize = 12.sp
                 )
-                Text(
-                    "Auto-on: ${state.automationPolicy.autoConnectApps.size} приложений",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        Text("Приложения", color = Color.White, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Split tunnel: приложение работает без VPN. Auto-off: VPN отключается при запуске приложения. Политики сверху приходят из оркестратора.",
-            color = Color(0xFF92A6B6),
-            fontSize = 12.sp
-        )
-
-        state.installedApps.take(80).forEach { app ->
-            val splitEnabled = state.splitTunnelApps.contains(app.packageName)
-            val autoEnabled = state.autoDisconnectApps.contains(app.packageName)
-            val policyRoutesApp =
-                state.routingPolicy.normalizedMode == AppRoutingPolicy.MODE_SELECTED_APPS &&
-                    state.routingPolicy.includedApps.contains(app.packageName)
-            val policyAutoOff = state.automationPolicy.autoDisconnectApps.contains(app.packageName)
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF071019)),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Text(
-                        text = app.label,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = app.packageName,
-                        color = Color(0xFF7F93A3),
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (policyRoutesApp || policyAutoOff) {
-                        Text(
-                            text = listOfNotNull(
-                                if (policyRoutesApp) "routing policy" else null,
-                                if (policyAutoOff) "auto-off policy" else null
-                            ).joinToString(" / "),
-                            color = NeonGreen,
-                            fontSize = 11.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = splitEnabled, onCheckedChange = { onToggleSplit(app.packageName) })
-                        Text("Split tunnel", color = Color(0xFFC9D3DB))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Checkbox(checked = autoEnabled, onCheckedChange = { onToggleAuto(app.packageName) })
-                        Text("Auto-off", color = Color(0xFFC9D3DB))
-                    }
+                Button(
+                    onClick = onResetPolicies,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonButtonBg,
+                        contentColor = NeonGreen
+                    ),
+                    border = BorderStroke(1.2.dp, NeonButtonOutline)
+                ) {
+                    Text("Сбросить к рекомендованным")
                 }
             }
         }
 
+        AppPolicySection(
+            title = "Routing",
+            description = "Какие приложения идут через VPN. Если секция выключена, туннель работает для всех приложений.",
+            enabled = state.routingEnabled,
+            selectedPackages = state.routingApps,
+            recommendedPackages = recommendedRoutingApps,
+            apps = state.installedApps,
+            onEnabledChanged = onRoutingEnabledChanged,
+            onTogglePackage = onToggleRouting
+        )
+
+        AppPolicySection(
+            title = "Auto ON",
+            description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен Usage Access.",
+            enabled = state.autoConnectEnabled,
+            selectedPackages = state.autoConnectApps,
+            recommendedPackages = recommendedAutoOnApps,
+            apps = state.installedApps,
+            onEnabledChanged = onAutoConnectEnabledChanged,
+            onTogglePackage = onToggleAutoConnect
+        )
+
+        AppPolicySection(
+            title = "Auto OFF",
+            description = "Какие приложения временно выключают VPN. Этот список имеет приоритет над Auto ON.",
+            enabled = state.autoDisconnectEnabled,
+            selectedPackages = state.autoDisconnectApps,
+            recommendedPackages = recommendedAutoOffApps,
+            apps = state.installedApps,
+            onEnabledChanged = onAutoDisconnectEnabledChanged,
+            onTogglePackage = onToggleAutoDisconnect
+        )
+    }
+}
+
+@Composable
+private fun AppPolicySection(
+    title: String,
+    description: String,
+    enabled: Boolean,
+    selectedPackages: Set<String>,
+    recommendedPackages: Set<String>,
+    apps: List<InstalledApp>,
+    onEnabledChanged: (Boolean) -> Unit,
+    onTogglePackage: (String) -> Unit
+) {
+    val visibleApps = remember(apps, selectedPackages, recommendedPackages) {
+        apps.sortedWith(
+            compareByDescending<InstalledApp> { selectedPackages.contains(it.packageName) }
+                .thenByDescending { recommendedPackages.contains(it.packageName) }
+                .thenBy { it.label.lowercase() }
+        ).take(80)
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${selectedPackages.size} выбрано / ${recommendedPackages.size} рекомендовано",
+                        color = Color(0xFF92A6B6),
+                        fontSize = 12.sp
+                    )
+                }
+                Switch(checked = enabled, onCheckedChange = onEnabledChanged)
+            }
+            Text(description, color = Color(0xFF92A6B6), fontSize = 12.sp)
+
+            visibleApps.forEach { app ->
+                val selected = selectedPackages.contains(app.packageName)
+                val recommended = recommendedPackages.contains(app.packageName)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF071019)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = selected,
+                            enabled = enabled,
+                            onCheckedChange = { onTogglePackage(app.packageName) }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = app.label,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = app.packageName,
+                                color = Color(0xFF7F93A3),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (recommended) {
+                                Text("Рекомендовано", color = NeonGreen, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
+    return when (state.routingPolicy.normalizedMode) {
+        AppRoutingPolicy.MODE_SELECTED_APPS -> state.routingPolicy.includedApps
+        else -> emptySet()
     }
 }
 

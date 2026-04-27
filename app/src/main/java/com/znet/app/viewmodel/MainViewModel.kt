@@ -36,8 +36,12 @@ data class MainUiState(
     val selectedNodeId: String? = null,
     val selectedNode: ServerNode? = null,
     val installedApps: List<InstalledApp> = emptyList(),
-    val splitTunnelApps: Set<String> = emptySet(),
+    val routingApps: Set<String> = emptySet(),
+    val autoConnectApps: Set<String> = emptySet(),
     val autoDisconnectApps: Set<String> = emptySet(),
+    val routingEnabled: Boolean = true,
+    val autoConnectEnabled: Boolean = true,
+    val autoDisconnectEnabled: Boolean = true,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val adaptiveEnabled: Boolean = true,
@@ -111,8 +115,12 @@ class MainViewModel(
             selectedNodeId = prefs.selectedNodeId,
             selectedNode = selectedNode,
             installedApps = apps,
-            splitTunnelApps = prefs.splitTunnelApps,
+            routingApps = prefs.routingApps,
+            autoConnectApps = prefs.autoConnectApps,
             autoDisconnectApps = prefs.autoDisconnectApps,
+            routingEnabled = prefs.routingEnabled,
+            autoConnectEnabled = prefs.autoConnectEnabled,
+            autoDisconnectEnabled = prefs.autoDisconnectEnabled,
             routingPolicy = access?.routingPolicy ?: AppRoutingPolicy(),
             automationPolicy = access?.automationPolicy ?: AppAutomationPolicy(),
             adaptiveEnabled = prefs.adaptiveEnabled,
@@ -297,13 +305,24 @@ class MainViewModel(
         }
     }
 
-    fun toggleSplitTunnel(packageName: String) {
+    fun toggleRoutingApp(packageName: String) {
         viewModelScope.launch {
             val prefs = preferencesRepository.preferences.first()
-            val updated = prefs.splitTunnelApps.toMutableSet().apply {
+            val updated = prefs.routingApps.toMutableSet().apply {
                 if (!add(packageName)) remove(packageName)
             }
-            preferencesRepository.setSplitTunnelApps(updated)
+            preferencesRepository.setRoutingApps(updated)
+        }
+    }
+
+    fun toggleAutoConnect(packageName: String) {
+        viewModelScope.launch {
+            val prefs = preferencesRepository.preferences.first()
+            val updated = prefs.autoConnectApps.toMutableSet().apply {
+                if (!add(packageName)) remove(packageName)
+            }
+            preferencesRepository.setAutoConnectApps(updated)
+            syncAutomationMonitor()
         }
     }
 
@@ -314,6 +333,41 @@ class MainViewModel(
                 if (!add(packageName)) remove(packageName)
             }
             preferencesRepository.setAutoDisconnectApps(updated)
+        }
+    }
+
+    fun setRoutingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setRoutingEnabled(enabled)
+        }
+    }
+
+    fun setAutoConnectEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setAutoConnectEnabled(enabled)
+            syncAutomationMonitor()
+        }
+    }
+
+    fun setAutoDisconnectEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setAutoDisconnectEnabled(enabled)
+        }
+    }
+
+    fun resetAppPoliciesToRecommended() {
+        viewModelScope.launch {
+            val access = resolvedAccess.value
+            if (access == null) {
+                message.value = "Access profile is not ready"
+                return@launch
+            }
+            preferencesRepository.resetPolicyDefaults(
+                routingPolicy = access.routingPolicy,
+                automationPolicy = access.automationPolicy
+            )
+            syncAutomationMonitor()
+            message.value = "Recommended app policies restored"
         }
     }
 
@@ -333,13 +387,19 @@ class MainViewModel(
                         access = access,
                         autoConnect = false
                     )
+                    val effectiveRoutingPolicy = effectiveRoutingPolicy(
+                        access = access,
+                        prefs = prefs
+                    )
+                    val effectiveAutomationPolicy = effectiveAutomationPolicy(
+                        prefs = prefs
+                    )
                     vpnRepository.startVpn(
                         node = access.node,
                         xrayConfig = access.xrayConfig,
-                        routingPolicy = access.routingPolicy,
-                        splitTunnelApps = prefs.splitTunnelApps,
-                        automationPolicy = access.automationPolicy,
-                        autoDisconnectApps = prefs.autoDisconnectApps,
+                        routingPolicy = effectiveRoutingPolicy,
+                        automationPolicy = effectiveAutomationPolicy,
+                        autoDisconnectApps = emptySet(),
                         latencyMs = -1L
                     )
                     message.value = null
@@ -424,13 +484,58 @@ class MainViewModel(
         access: ResolvedNodeAccess,
         autoConnect: Boolean
     ) {
+        preferencesRepository.applyPolicyDefaultsIfNeeded(
+            routingPolicy = access.routingPolicy,
+            automationPolicy = access.automationPolicy
+        )
         resolvedAccess.value = access
         loadedNodes.value = listOf(access.node)
         preferencesRepository.setSelectedNode(access.node.id)
         isAuthenticated.value = true
         pendingAutoConnect.value = autoConnect
+        syncAutomationMonitor()
         authError.value = null
         message.value = null
+    }
+
+    private fun effectiveRoutingPolicy(
+        access: ResolvedNodeAccess,
+        prefs: UserPreferences
+    ): AppRoutingPolicy {
+        val routingApps = prefs.routingApps.normalizedPackages()
+        if (!prefs.routingEnabled || routingApps.isEmpty()) {
+            return AppRoutingPolicy(mode = AppRoutingPolicy.MODE_ALL_APPS)
+        }
+
+        return access.routingPolicy.copy(
+            mode = AppRoutingPolicy.MODE_SELECTED_APPS,
+            includedApps = routingApps,
+            excludedApps = emptySet()
+        )
+    }
+
+    private fun effectiveAutomationPolicy(
+        prefs: UserPreferences
+    ): AppAutomationPolicy {
+        return AppAutomationPolicy(
+            autoConnectApps = if (prefs.autoConnectEnabled) {
+                prefs.autoConnectApps.normalizedPackages()
+            } else {
+                emptySet()
+            },
+            autoDisconnectApps = if (prefs.autoDisconnectEnabled) {
+                prefs.autoDisconnectApps.normalizedPackages()
+            } else {
+                emptySet()
+            },
+            requiresUsageAccess = prefs.autoConnectEnabled || prefs.autoDisconnectEnabled
+        )
+    }
+
+    private fun Iterable<String>.normalizedPackages(): Set<String> {
+        return map { item -> item.trim() }
+            .filter { item -> item.isNotBlank() }
+            .toSet()
     }
 
     private fun enterAuthenticatedPendingState(error: Throwable) {
@@ -495,6 +600,7 @@ class MainViewModel(
         clearMessage: Boolean = false
     ) {
         vpnRepository.stopVpn()
+        vpnRepository.stopAutomationMonitor()
         vpnRepository.clearSession()
         resolvedAccess.value = null
         loadedNodes.value = emptyList()
@@ -504,6 +610,20 @@ class MainViewModel(
         authError.value = error.message ?: INVALID_TOKEN_MESSAGE
         authTokenInput.value = ""
         message.value = if (clearMessage) null else message.value
+    }
+
+    private suspend fun syncAutomationMonitor() {
+        val prefs = preferencesRepository.preferences.first()
+        val shouldRun =
+            prefs.deviceToken.trim().length == REQUIRED_TOKEN_LENGTH &&
+                prefs.autoConnectEnabled &&
+                prefs.autoConnectApps.isNotEmpty()
+
+        if (shouldRun) {
+            vpnRepository.startAutomationMonitor()
+        } else {
+            vpnRepository.stopAutomationMonitor()
+        }
     }
 
     private fun isInvalidSessionFailure(error: Throwable): Boolean {

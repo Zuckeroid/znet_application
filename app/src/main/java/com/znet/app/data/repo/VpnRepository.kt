@@ -16,6 +16,7 @@ import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
 import com.znet.app.data.remote.InvalidTokenException
+import com.znet.app.vpn.AppAutomationMonitorService
 import com.znet.app.vpn.ZnetVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -99,18 +100,17 @@ class VpnRepository(
         node: ServerNode,
         xrayConfig: String,
         routingPolicy: AppRoutingPolicy,
-        splitTunnelApps: Set<String>,
         automationPolicy: AppAutomationPolicy,
         autoDisconnectApps: Set<String>,
         latencyMs: Long
     ) {
         val allowedApps = routingAllowedApps(
             routingPolicy = routingPolicy,
-            userExcludedApps = splitTunnelApps
+            userExcludedApps = emptySet()
         )
         val disallowedApps = routingDisallowedApps(
             routingPolicy = routingPolicy,
-            userExcludedApps = splitTunnelApps,
+            userExcludedApps = emptySet(),
             allowedApps = allowedApps
         )
         val effectiveAutoDisconnectApps =
@@ -131,6 +131,20 @@ class VpnRepository(
     fun stopVpn() {
         val intent = Intent(context, ZnetVpnService::class.java).apply {
             action = ZnetVpnService.ACTION_DISCONNECT
+        }
+        context.startService(intent)
+    }
+
+    fun startAutomationMonitor() {
+        val intent = Intent(context, AppAutomationMonitorService::class.java).apply {
+            action = AppAutomationMonitorService.ACTION_START
+        }
+        context.startForegroundService(intent)
+    }
+
+    fun stopAutomationMonitor() {
+        val intent = Intent(context, AppAutomationMonitorService::class.java).apply {
+            action = AppAutomationMonitorService.ACTION_STOP
         }
         context.startService(intent)
     }
@@ -209,6 +223,7 @@ class VpnRepository(
         return routingPolicy.includedApps
             .normalizePackageSet()
             .filterNot { packageName -> excluded.contains(packageName) }
+            .filter { packageName -> isInstalledPackage(packageName) }
             .toSet()
     }
 
@@ -234,6 +249,13 @@ class VpnRepository(
         return map { item -> item.trim() }
             .filter { item -> item.isNotBlank() }
             .toSet()
+    }
+
+    private fun isInstalledPackage(packageName: String): Boolean {
+        val pm = context.packageManager
+        return runCatching {
+            pm.getLaunchIntentForPackage(packageName) != null
+        }.getOrDefault(false)
     }
 
     private companion object {
