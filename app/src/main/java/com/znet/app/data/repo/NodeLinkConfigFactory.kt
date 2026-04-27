@@ -2,6 +2,8 @@
 
 import com.znet.app.data.model.ServerNode
 import com.znet.app.data.remote.TokenAccessResponse
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -28,7 +30,7 @@ object NodeLinkConfigFactory {
             val endpoint = access.nodeLink?.let { parseEndpoint(it) }
             return ResolvedNodeAccess(
                 node = buildNode(access, endpoint),
-                xrayConfig = inlineConfig,
+                xrayConfig = normalizeRuntimeConfig(inlineConfig),
                 protocol = access.connectionProtocol,
                 serviceTitle = access.serviceTitle,
                 serviceExpiresAt = access.serviceExpiresAt,
@@ -49,6 +51,45 @@ object NodeLinkConfigFactory {
             serviceExpiresAt = access.serviceExpiresAt,
             serviceDaysRemaining = access.serviceDaysRemaining
         )
+    }
+
+    private fun normalizeRuntimeConfig(rawConfig: String): String {
+        val parsed = runCatching {
+            Json.parseToJsonElement(rawConfig).jsonObject
+        }.getOrNull() ?: return rawConfig
+
+        val hasTunInbound = (parsed["inbounds"] as? JsonArray)
+            ?.any { inbound ->
+                (inbound as? JsonObject)?.get("protocol")
+                    ?.let { it as? JsonPrimitive }
+                    ?.contentOrNull
+                    ?.equals("tun", ignoreCase = true) == true
+            } == true
+
+        if (hasTunInbound) {
+            return rawConfig
+        }
+
+        return buildJsonObject {
+            parsed.forEach { (key, value) ->
+                if (key != "inbounds") {
+                    put(key, value)
+                }
+            }
+            put("inbounds", buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("tag", JsonPrimitive("tun-in"))
+                        put("port", JsonPrimitive(0))
+                        put("protocol", JsonPrimitive("tun"))
+                        put("settings", buildJsonObject {
+                            put("name", JsonPrimitive("xray0"))
+                            put("MTU", JsonPrimitive(1500))
+                        })
+                    }
+                )
+            })
+        }.toString()
     }
 
     private fun parseLink(rawLink: String): ParsedLink {
