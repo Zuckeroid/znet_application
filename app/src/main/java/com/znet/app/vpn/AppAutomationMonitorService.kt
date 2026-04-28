@@ -238,6 +238,7 @@ class AppAutomationMonitorService : Service() {
             node = access.node,
             xrayConfig = access.xrayConfig,
             protocol = access.protocol,
+            transport = access.transport,
             routingPolicy = access.routingPolicy,
             automationPolicy = access.automationPolicy
         )

@@ -21,6 +21,7 @@ data class ResolvedNodeAccess(
     val node: ServerNode,
     val xrayConfig: String,
     val protocol: String? = null,
+    val transport: String? = null,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val profiles: Map<String, ResolvedAccessProfile> = emptyMap(),
@@ -35,6 +36,7 @@ data class ResolvedAccessProfile(
     val node: ServerNode,
     val xrayConfig: String,
     val protocol: String? = null,
+    val transport: String? = null,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy()
 )
@@ -43,12 +45,14 @@ object NodeLinkConfigFactory {
     fun fromTokenAccess(access: TokenAccessResponse): ResolvedNodeAccess {
         val runtimeConfig = access.xrayConfig?.trim().orEmpty()
         require(runtimeConfig.isNotBlank()) { "Runtime config is missing" }
+        val normalizedConfig = normalizeRuntimeConfig(runtimeConfig)
         val normalProfile = ResolvedAccessProfile(
             id = "normal",
             label = "Обычный режим",
             node = buildNode(access, null),
-            xrayConfig = normalizeRuntimeConfig(runtimeConfig),
+            xrayConfig = normalizedConfig,
             protocol = access.connectionProtocol,
+            transport = access.connectionTransport ?: extractTransport(normalizedConfig),
             routingPolicy = access.routingPolicy,
             automationPolicy = access.automationPolicy
         )
@@ -62,6 +66,7 @@ object NodeLinkConfigFactory {
             node = normalProfile.node,
             xrayConfig = normalProfile.xrayConfig,
             protocol = normalProfile.protocol,
+            transport = normalProfile.transport,
             routingPolicy = normalProfile.routingPolicy,
             automationPolicy = normalProfile.automationPolicy,
             profiles = profiles,
@@ -82,16 +87,35 @@ object NodeLinkConfigFactory {
         if (runtimeConfig.isBlank()) {
             return null
         }
+        val normalizedConfig = normalizeRuntimeConfig(runtimeConfig)
 
         return ResolvedAccessProfile(
             id = profile.id.ifBlank { fallbackId },
             label = profile.label?.takeIf { it.isNotBlank() } ?: fallbackId,
             node = buildNode(profile),
-            xrayConfig = normalizeRuntimeConfig(runtimeConfig),
+            xrayConfig = normalizedConfig,
             protocol = profile.protocol,
+            transport = profile.transport ?: extractTransport(normalizedConfig),
             routingPolicy = profile.routingPolicy,
             automationPolicy = profile.automationPolicy
         )
+    }
+
+    private fun extractTransport(config: String): String? {
+        val parsed = runCatching {
+            Json.parseToJsonElement(config).jsonObject
+        }.getOrNull() ?: return null
+
+        val outbound = (parsed["outbounds"] as? JsonArray)
+            ?.firstOrNull { item -> item is JsonObject } as? JsonObject
+        val streamSettings = outbound
+            ?.get("streamSettings")
+            ?.let { item -> item as? JsonObject }
+
+        return (streamSettings?.get("network") as? JsonPrimitive)
+            ?.contentOrNull
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun normalizeRuntimeConfig(rawConfig: String): String {

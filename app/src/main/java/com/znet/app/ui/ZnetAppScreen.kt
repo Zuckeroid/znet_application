@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
@@ -39,7 +40,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -90,6 +91,10 @@ import com.znet.app.viewmodel.MainViewModel
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 
 private enum class BottomTab {
     Home,
@@ -108,6 +113,7 @@ private val NeonGreenSoft = Color(0x665BFF74)
 private val NeonMuted = Color(0xFF6D7D8A)
 private val NeonButtonOutline = Color(0xFF48FF70)
 private val NeonButtonBg = Color(0xFF0A2413)
+private val ControlBorderWidth = 0.8.dp
 
 private data class PolicyAppItem(
     val packageName: String,
@@ -431,7 +437,7 @@ private fun TokenAuthScreen(
                         containerColor = NeonButtonBg,
                         contentColor = NeonGreen
                     ),
-                    border = BorderStroke(1.2.dp, NeonButtonOutline)
+                    border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
                 ) {
                     if (state.authInProgress) {
                         CircularProgressIndicator(
@@ -563,19 +569,12 @@ private fun HomeScreen(
             Column(modifier = Modifier.padding(14.dp)) {
                 Text(
                     text = if (node == null) {
-                        "Нода не выбрана"
+                        "Сервер не выбран"
                     } else {
-                        "Нода: ${node.flagEmoji} ${node.name}"
+                        "Сервер: ${node.flagEmoji} ${node.name}"
                     },
                     color = Color(0xFFB6C4CE)
                 )
-                if (node != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = node.country,
-                        color = Color(0xFF90A4B5)
-                    )
-                }
                 if (state.latencyMs >= 0) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -600,7 +599,7 @@ private fun HomeScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 InfoRow(
                     label = "Протокол",
-                    value = state.protocol?.uppercase().orEmpty().ifBlank { "не определен" }
+                    value = formatProtocolTransport(state.protocol, state.transport)
                 )
                 InfoRow(
                     label = "Подписка",
@@ -608,7 +607,8 @@ private fun HomeScreen(
                 )
                 InfoRow(
                     label = "Осталось",
-                    value = formatDaysRemaining(state.serviceDaysRemaining, state.serviceExpiresAt)
+                    value = formatDaysRemaining(state.serviceDaysRemaining, state.serviceExpiresAt),
+                    valueFontSize = 13.sp
                 )
             }
         }
@@ -618,7 +618,8 @@ private fun HomeScreen(
 @Composable
 private fun InfoRow(
     label: String,
-    value: String
+    value: String,
+    valueFontSize: TextUnit = TextUnit.Unspecified
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -633,6 +634,7 @@ private fun InfoRow(
         Text(
             text = value,
             color = Color.White,
+            fontSize = valueFontSize,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -665,7 +667,7 @@ private fun ServersScreen(
                     containerColor = NeonButtonBg,
                     contentColor = NeonGreen
                 ),
-                border = BorderStroke(1.2.dp, NeonButtonOutline)
+                border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
             ) {
                 Text("Обновить доступ")
             }
@@ -754,7 +756,7 @@ private fun SettingsSectionSelector(
                     containerColor = if (active) NeonButtonBg else Color(0xFF071019),
                 ),
                 border = BorderStroke(
-                    width = if (active) 1.2.dp else 1.dp,
+                    width = ControlBorderWidth,
                     color = if (active) NeonButtonOutline else Color(0x3323333F)
                 )
             ) {
@@ -952,7 +954,7 @@ private fun SettingsScreen(
                                 containerColor = NeonButtonBg,
                                 contentColor = NeonGreen
                             ),
-                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                            border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
                         ) {
                             Text("Разрешить доступ к активности")
                         }
@@ -986,7 +988,7 @@ private fun SettingsScreen(
                                 containerColor = NeonButtonBg,
                                 contentColor = NeonGreen
                             ),
-                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                            border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
                         ) {
                             Text("Сбросить к рекомендованным")
                         }
@@ -1049,7 +1051,7 @@ private fun SettingsScreen(
                                 containerColor = NeonButtonBg,
                                 contentColor = NeonGreen
                             ),
-                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                            border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
                         ) {
                             Text("Настройки уведомлений")
                         }
@@ -1075,7 +1077,7 @@ private fun SettingsScreen(
                                     containerColor = NeonButtonBg,
                                     contentColor = NeonGreen
                                 ),
-                                border = BorderStroke(1.2.dp, NeonButtonOutline)
+                                border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
                             ) {
                                 Text("Сбросить Znet", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -1086,7 +1088,7 @@ private fun SettingsScreen(
                                     containerColor = Color(0xFF101A24),
                                     contentColor = Color.White
                                 ),
-                                border = BorderStroke(1.dp, Color(0x3348FF70))
+                                border = BorderStroke(ControlBorderWidth, Color(0x3348FF70))
                             ) {
                                 Text("Настройки VPN", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -1247,7 +1249,7 @@ private fun AppPolicySection(
                     containerColor = NeonButtonBg,
                     contentColor = NeonGreen
                 ),
-                border = BorderStroke(1.2.dp, NeonButtonOutline)
+                border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
             ) {
                 if (opening) {
                     Row(
@@ -1308,10 +1310,10 @@ private fun PolicyAppRow(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(
+            PolicyCheckbox(
                 checked = selected,
                 enabled = enabled,
-                onCheckedChange = { onTogglePackage(app.packageName) }
+                onClick = { onTogglePackage(app.packageName) }
             )
             Spacer(modifier = Modifier.width(8.dp))
             PolicyAppIcon(app = app)
@@ -1331,6 +1333,43 @@ private fun PolicyAppRow(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PolicyCheckbox(
+    checked: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    val borderColor = when {
+        !enabled -> Color(0xFF26323B)
+        checked -> NeonButtonOutline
+        else -> Color(0xFF42515B)
+    }
+    val backgroundColor = when {
+        !enabled -> Color(0xFF0B1117)
+        checked -> Color(0xFF0A2413)
+        else -> Color.Transparent
+    }
+
+    Box(
+        modifier = Modifier
+            .size(22.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(backgroundColor)
+            .border(ControlBorderWidth, borderColor, RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (checked) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = NeonGreen,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -1394,6 +1433,8 @@ private fun List<PolicyAppItem>.filterByPolicyQuery(query: String): List<PolicyA
 
 private const val POLICY_APP_ICON_PX = 96
 private const val POLICY_LIST_OPEN_DELAY_MS = 160L
+private val ExpiryDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+private val ExpiryDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
 private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
     return when (state.routingPolicy.normalizedMode) {
@@ -1422,13 +1463,38 @@ private fun formatDaysRemaining(
         in 2..4 -> "$daysRemaining дня"
         else -> "$daysRemaining дней"
     }
-    val datePart = expiresAt?.substringBefore('T')?.takeIf { it.isNotBlank() }
+    val datePart = formatExpiryDate(expiresAt)
     return when {
         suffix != null && datePart != null -> "$suffix, до $datePart"
         suffix != null -> suffix
         datePart != null -> "до $datePart"
         else -> "неизвестно"
     }
+}
+
+private fun formatProtocolTransport(
+    protocol: String?,
+    transport: String?
+): String {
+    val cleanProtocol = protocol?.trim()?.takeIf { it.isNotBlank() }?.uppercase()
+    val cleanTransport = transport?.trim()?.takeIf { it.isNotBlank() }?.uppercase()
+    return when {
+        cleanProtocol != null && cleanTransport != null -> "$cleanProtocol/$cleanTransport"
+        cleanProtocol != null -> cleanProtocol
+        cleanTransport != null -> cleanTransport
+        else -> "не определен"
+    }
+}
+
+private fun formatExpiryDate(rawValue: String?): String? {
+    val value = rawValue?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    return runCatching {
+        OffsetDateTime.parse(value).format(ExpiryDateTimeFormatter)
+    }.recoverCatching {
+        LocalDateTime.parse(value).format(ExpiryDateTimeFormatter)
+    }.recoverCatching {
+        LocalDate.parse(value.substringBefore('T')).format(ExpiryDateFormatter)
+    }.getOrNull()
 }
 
 private fun formatDomainRevision(revision: String?): String {

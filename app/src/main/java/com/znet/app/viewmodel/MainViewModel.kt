@@ -54,6 +54,7 @@ data class MainUiState(
     val adaptiveEnabled: Boolean = true,
     val latencyMs: Long = -1,
     val protocol: String? = null,
+    val transport: String? = null,
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null,
@@ -151,6 +152,7 @@ class MainViewModel(
             adaptiveEnabled = prefs.adaptiveEnabled,
             latencyMs = status.latencyMs,
             protocol = activeProfile?.protocol ?: access?.protocol,
+            transport = activeProfile?.transport ?: access?.transport,
             serviceTitle = access?.serviceTitle,
             serviceExpiresAt = access?.serviceExpiresAt,
             serviceDaysRemaining = access?.serviceDaysRemaining,
@@ -648,6 +650,7 @@ class MainViewModel(
             node = access.node,
             xrayConfig = access.xrayConfig,
             protocol = access.protocol,
+            transport = access.transport,
             routingPolicy = access.routingPolicy,
             automationPolicy = access.automationPolicy
         )
