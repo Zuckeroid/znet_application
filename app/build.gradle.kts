@@ -1,33 +1,69 @@
-﻿plugins {
+import java.util.Properties
+
+plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val localSigningProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.isFile) {
+        file.inputStream().use(::load)
+    }
+}
+
+fun configValue(name: String): String? {
+    return providers.environmentVariable(name).orNull
+        ?: providers.gradleProperty(name).orNull
+        ?: localSigningProperties.getProperty(name)
+}
+
+fun configValue(name: String, defaultValue: String): String {
+    return configValue(name)?.takeIf { it.isNotBlank() } ?: defaultValue
+}
+
+fun escapedBuildString(value: String): String {
+    return value.replace("\\", "\\\\").replace("\"", "\\\"")
+}
+
+fun buildStringField(value: String): String = "\"${escapedBuildString(value)}\""
+
+val appVersionCode = configValue("ZNET_VERSION_CODE")
+    ?.toIntOrNull()
+    ?: 1
+val appVersionName = configValue("ZNET_VERSION_NAME", "0.1.0")
+val defaultAuthApiUrl = configValue("ZNET_AUTH_API_URL", "https://my-storage.org")
+val defaultAuthApiUrls = configValue("ZNET_AUTH_API_URLS", defaultAuthApiUrl)
+val debugAuthApiUrl = configValue("ZNET_DEBUG_AUTH_API_URL", defaultAuthApiUrl)
+val debugAuthApiUrls = configValue("ZNET_DEBUG_AUTH_API_URLS", defaultAuthApiUrls)
+val releaseAuthApiUrl = configValue("ZNET_RELEASE_AUTH_API_URL", defaultAuthApiUrl)
+val releaseAuthApiUrls = configValue("ZNET_RELEASE_AUTH_API_URLS", defaultAuthApiUrls)
+val debugApplicationIdSuffix = configValue("ZNET_DEBUG_APPLICATION_ID_SUFFIX")
+    ?.trim()
+    .orEmpty()
+
+val releaseStoreFilePath = configValue("ZNET_RELEASE_STORE_FILE")
+val releaseStorePassword = configValue("ZNET_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = configValue("ZNET_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = configValue("ZNET_RELEASE_KEY_PASSWORD") ?: releaseStorePassword
+val releaseSigningReady = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { value -> !value.isNullOrBlank() }
+
 android {
     namespace = "com.znet.app"
     compileSdk = 34
-    val authApiUrl = providers
-        .environmentVariable("ZNET_AUTH_API_URL")
-        .orElse(providers.gradleProperty("ZNET_AUTH_API_URL"))
-        .orElse("https://my-storage.org")
-        .get()
-        .replace("\"", "\\\"")
-    val authApiUrls = providers
-        .environmentVariable("ZNET_AUTH_API_URLS")
-        .orElse(providers.gradleProperty("ZNET_AUTH_API_URLS"))
-        .orElse(authApiUrl)
-        .get()
-        .replace("\"", "\\\"")
 
     defaultConfig {
         applicationId = "com.znet.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
-        buildConfigField("String", "AUTH_API_URL", "\"$authApiUrl\"")
-        buildConfigField("String", "AUTH_API_URLS", "\"$authApiUrls\"")
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -35,16 +71,40 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFilePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+            if (debugApplicationIdSuffix.isNotBlank()) {
+                applicationIdSuffix = debugApplicationIdSuffix
+            }
+            versionNameSuffix = "-debug"
+            buildConfigField("String", "APP_ENVIRONMENT", buildStringField("debug"))
+            buildConfigField("String", "AUTH_API_URL", buildStringField(debugAuthApiUrl))
+            buildConfigField("String", "AUTH_API_URLS", buildStringField(debugAuthApiUrls))
+            buildConfigField("boolean", "ENABLE_VERBOSE_LOGS", "true")
+        }
         release {
             isMinifyEnabled = true
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+            buildConfigField("String", "APP_ENVIRONMENT", buildStringField("release"))
+            buildConfigField("String", "AUTH_API_URL", buildStringField(releaseAuthApiUrl))
+            buildConfigField("String", "AUTH_API_URLS", buildStringField(releaseAuthApiUrls))
+            buildConfigField("boolean", "ENABLE_VERBOSE_LOGS", "false")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-        }
-        debug {
-            isMinifyEnabled = false
         }
     }
 

@@ -25,10 +25,28 @@ MVP Android client for znet with:
 1. Put your xray binary at:
    - `app/src/main/assets/xray/xray`
 2. Use Android JDK 17+ for build.
-3. Set constant auth API URL before build:
-   - Windows PowerShell (current session): `$env:ZNET_AUTH_API_URL="https://your-api.example.com"`
-   - or in `gradle.properties`: `ZNET_AUTH_API_URL=https://your-api.example.com`
-4. In app, user enters only token (no URL field in UI).
+3. In app, user enters only token (no URL field in UI).
+
+## Build configuration
+Build values can be provided through environment variables, `gradle.properties`, or local `keystore.properties`.
+
+- `ZNET_AUTH_API_URL` / `ZNET_AUTH_API_URLS` - shared bootstrap API domains.
+- `ZNET_DEBUG_AUTH_API_URL` / `ZNET_DEBUG_AUTH_API_URLS` - debug override.
+- `ZNET_RELEASE_AUTH_API_URL` / `ZNET_RELEASE_AUTH_API_URLS` - release override.
+- `ZNET_VERSION_CODE` / `ZNET_VERSION_NAME` - app version.
+- `ZNET_DEBUG_APPLICATION_ID_SUFFIX` - optional debug suffix, for example `.dev`.
+
+Debug keeps the production package id by default, so a local install does not reset the current test device session.
+
+## Release signing
+Release signing is intentionally local-only. Copy `keystore.properties.example` to `keystore.properties` and fill:
+
+- `ZNET_RELEASE_STORE_FILE`
+- `ZNET_RELEASE_STORE_PASSWORD`
+- `ZNET_RELEASE_KEY_ALIAS`
+- `ZNET_RELEASE_KEY_PASSWORD`
+
+`keystore.properties` and keystore files are ignored by git.
 
 ## Billing API expected
 - `POST /api/guest/appbridge/token_login`
@@ -41,5 +59,7 @@ Your Xray mobile wrapper/config should consume this descriptor or use your exist
 
 ## Build
 `./gradlew assembleDebug`
+
+`./gradlew assembleRelease`
 
 If Java 8 is installed globally, point Gradle to JDK 17 in Android Studio settings or `JAVA_HOME`.
