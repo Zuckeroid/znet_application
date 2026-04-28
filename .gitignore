@@ -8,6 +8,7 @@ local.properties
 build/
 app/build/
 */build/
+dist/
 
 # Logs
 *.log
