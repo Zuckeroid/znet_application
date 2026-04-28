@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
@@ -232,9 +233,11 @@ class VpnRepository(
         val prefs = preferencesRepository.preferences.first()
         val candidates = preferencesRepository.apiBaseUrlCandidates(prefs)
         require(candidates.isNotEmpty()) { INVALID_TOKEN_MESSAGE }
+        Log.i(TAG, "Resolving access via ${candidates.size} API domain candidate(s)")
 
         var lastRecoverableError: Throwable? = null
-        for (baseUrl in candidates) {
+        for ((index, baseUrl) in candidates.withIndex()) {
+            Log.i(TAG, "Trying API domain ${index + 1}/${candidates.size}: $baseUrl")
             val result = orchestratorClient.resolveTokenAccess(
                 baseUrl = baseUrl,
                 token = token,
@@ -242,13 +245,19 @@ class VpnRepository(
             )
             val access = result.getOrNull()
             if (access != null) {
+                Log.i(
+                    TAG,
+                    "API domain accepted: $baseUrl, domain rev=${access.domainBundle.revision ?: "none"}, api=${access.domainBundle.api.size}, web=${access.domainBundle.web.size}"
+                )
                 return DomainResolvedAccess(access = access, apiBaseUrl = baseUrl)
             }
 
             val error = result.exceptionOrNull() ?: continue
             if (!shouldTryNextDomain(error)) {
+                Log.w(TAG, "API domain failed with terminal access error: $baseUrl (${error.javaClass.simpleName})")
                 throw error
             }
+            Log.w(TAG, "API domain failed, trying next if available: $baseUrl (${error.javaClass.simpleName}: ${error.message})")
             lastRecoverableError = error
         }
 
@@ -258,6 +267,10 @@ class VpnRepository(
     private suspend fun rememberSuccessfulDomain(resolved: DomainResolvedAccess) {
         preferencesRepository.setLastWorkingApiBaseUrl(resolved.apiBaseUrl)
         preferencesRepository.rememberDomainBundle(resolved.access.domainBundle)
+        Log.i(
+            TAG,
+            "Remembered API domain ${resolved.apiBaseUrl}, domain rev=${resolved.access.domainBundle.revision ?: "none"}"
+        )
     }
 
     private fun shouldTryNextDomain(error: Throwable): Boolean {
@@ -361,6 +374,7 @@ class VpnRepository(
     }
 
     private companion object {
+        const val TAG = "ZnetAccess"
         const val REQUIRED_TOKEN_LENGTH = 32
         const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
         const val ACCESS_NOT_READY_MESSAGE = "Доступ пока не готов"

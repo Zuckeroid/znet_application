@@ -887,6 +887,30 @@ private fun SettingsScreen(
             shape = RoundedCornerShape(14.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Сервер доступа", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "API: ${state.apiBaseUrl.ifBlank { "не выбран" }}",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Личный кабинет: ${state.webBaseUrl}",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Пул доменов: API ${state.apiDomainCount}, Web ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
+                    color = Color(0xFF92A6B6),
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Политики приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Text(
                     "Рекомендации пришли из оркестратора. Дальше это локальные настройки этого телефона.",
@@ -1325,4 +1349,9 @@ private fun formatDaysRemaining(
         datePart != null -> "до $datePart"
         else -> "неизвестно"
     }
+}
+
+private fun formatDomainRevision(revision: String?): String {
+    val cleanRevision = revision?.trim()?.takeIf { it.isNotBlank() } ?: return ""
+    return ", rev $cleanRevision"
 }
