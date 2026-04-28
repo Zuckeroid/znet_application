@@ -124,6 +124,7 @@ fun ZnetAppScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshVpnEnvironment()
                 viewModel.validateDeviceSessionOnForeground()
             }
         }
@@ -262,6 +263,7 @@ fun ZnetAppScreen(
                 HomeScreen(
                     state = state,
                     onToggleVpn = { connectOrDisconnect() },
+                    onAwayModeChanged = viewModel::setAwayModeEnabled,
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -285,7 +287,14 @@ fun ZnetAppScreen(
                     onRoutingEnabledChanged = viewModel::setRoutingEnabled,
                     onAutoConnectEnabledChanged = viewModel::setAutoConnectEnabled,
                     onAutoDisconnectEnabledChanged = viewModel::setAutoDisconnectEnabled,
+                    onAwayModeChanged = viewModel::setAwayModeEnabled,
                     onResetPolicies = viewModel::resetAppPoliciesToRecommended,
+                    onResetZnetVpn = viewModel::disconnect,
+                    onOpenVpnSettings = {
+                        context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    },
                     onOpenUsageSettings = {
                         context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -368,7 +377,7 @@ private fun TokenAuthScreen(
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "Enter token to activate VPN access",
+            text = "Введите токен из личного кабинета",
             color = Color(0xFF9EB0BE)
         )
 
@@ -390,7 +399,7 @@ private fun TokenAuthScreen(
                 OutlinedTextField(
                     value = state.authTokenInput,
                     onValueChange = onTokenChanged,
-                    label = { Text("Access token") },
+                    label = { Text("Токен доступа") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -418,7 +427,7 @@ private fun TokenAuthScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     } else {
-                        Text("Sign in")
+                        Text("Войти")
                     }
                 }
             }
@@ -446,6 +455,7 @@ private fun TokenAuthScreen(
 private fun HomeScreen(
     state: MainUiState,
     onToggleVpn: () -> Unit,
+    onAwayModeChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val connected = state.connectionState == ConnectionState.CONNECTED
@@ -455,6 +465,7 @@ private fun HomeScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(Color(0xFF01050A), Color(0xFF062216), Color(0xFF01050A))
@@ -589,6 +600,49 @@ private fun HomeScreen(
                 )
             }
         }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    1.dp,
+                    if (state.awayModeEnabled) Color(0x5546FF6E) else Color(0x3323333F),
+                    RoundedCornerShape(16.dp)
+                ),
+            colors = CardDefaults.cardColors(containerColor = Color(0xDD09121A)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = if (state.awayModeAvailable) {
+                                "Банки и сервисы из Auto OFF пойдут через российскую ноду."
+                            } else {
+                                "Профиль появится после настройки away-ноды в оркестраторе."
+                            },
+                            color = Color(0xFF90A4B5),
+                            fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = state.awayModeEnabled,
+                        enabled = state.awayModeAvailable,
+                        onCheckedChange = onAwayModeChanged
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -713,13 +767,28 @@ private fun SettingsScreen(
     onRoutingEnabledChanged: (Boolean) -> Unit,
     onAutoConnectEnabledChanged: (Boolean) -> Unit,
     onAutoDisconnectEnabledChanged: (Boolean) -> Unit,
+    onAwayModeChanged: (Boolean) -> Unit,
     onResetPolicies: () -> Unit,
+    onResetZnetVpn: () -> Unit,
+    onOpenVpnSettings: () -> Unit,
     onOpenUsageSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val recommendedRoutingApps = recommendedRoutingPackages(state)
     val recommendedAutoOnApps = state.automationPolicy.autoConnectApps
     val recommendedAutoOffApps = state.automationPolicy.autoDisconnectApps
+    val znetVpnActive = state.connectionState == ConnectionState.CONNECTED ||
+        state.connectionState == ConnectionState.CONNECTING
+    val vpnDiagnosticTitle = when {
+        znetVpnActive -> "Активен Znet VPN"
+        state.vpnTransportActive -> "Активен другой VPN"
+        else -> "VPN не обнаружен"
+    }
+    val vpnDiagnosticText = when {
+        znetVpnActive -> "Туннелем управляет Znet."
+        state.vpnTransportActive -> "Android не раскрывает владельца VPN приложению. Откройте системные настройки, чтобы отключить чужой профиль."
+        else -> "Можно подключать Znet. Системный Legacy VPN без реального туннеля здесь не учитывается."
+    }
 
     Column(
         modifier = modifier
@@ -741,7 +810,7 @@ private fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Adaptive network", color = Color.White)
+                    Text("Адаптивная сеть", color = Color.White)
                     Switch(
                         checked = state.adaptiveEnabled,
                         onCheckedChange = onAdaptiveChanged
@@ -805,6 +874,78 @@ private fun SettingsScreen(
                     border = BorderStroke(1.2.dp, NeonButtonOutline)
                 ) {
                     Text("Сбросить к рекомендованным")
+                }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Российские приложения из Auto OFF будут идти через московскую ноду.",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = state.awayModeEnabled,
+                        enabled = state.awayModeAvailable,
+                        onCheckedChange = onAwayModeChanged
+                    )
+                }
+                if (!state.awayModeAvailable) {
+                    Text(
+                        "Нужна активная away-нода в оркестраторе.",
+                        color = Color(0xFFFFC857),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("VPN диагностика", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(vpnDiagnosticTitle, color = if (state.vpnTransportActive || znetVpnActive) NeonGreen else Color.White)
+                Text(vpnDiagnosticText, color = Color(0xFF92A6B6), fontSize = 12.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onResetZnetVpn,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonButtonBg,
+                            contentColor = NeonGreen
+                        ),
+                        border = BorderStroke(1.2.dp, NeonButtonOutline)
+                    ) {
+                        Text("Сбросить Znet", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Button(
+                        onClick = onOpenVpnSettings,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF101A24),
+                            contentColor = Color.White
+                        ),
+                        border = BorderStroke(1.dp, Color(0x3348FF70))
+                    ) {
+                        Text("Настройки VPN", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }

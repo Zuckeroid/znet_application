@@ -21,6 +21,7 @@ import com.znet.app.data.UserPreferences
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.remote.AppAutomationPolicy
 import com.znet.app.data.remote.AppRoutingPolicy
+import com.znet.app.data.repo.ResolvedAccessProfile
 import com.znet.app.data.repo.ResolvedNodeAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ class AppAutomationMonitorService : Service() {
     private val container by lazy { (application as ZnetApp).container }
     private var monitorStarted = false
     private var lastAutoConnectAttemptMs = 0L
+    private var lastLoggedForegroundPackage: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -61,6 +63,8 @@ class AppAutomationMonitorService : Service() {
         if (monitorStarted) return
         monitorStarted = true
         startForeground(NOTIFICATION_ID, buildNotification())
+        Log.i(TAG, "Automation monitor started")
+        appendDebug("monitor started")
 
         serviceScope.launch {
             while (isActive) {
@@ -68,6 +72,7 @@ class AppAutomationMonitorService : Service() {
                     tick()
                 }.onFailure { error ->
                     Log.w(TAG, "Automation monitor tick failed", error)
+                    appendDebug("tick failed: ${error.message}")
                 }
                 delay(MONITOR_INTERVAL_MS)
             }
@@ -77,29 +82,46 @@ class AppAutomationMonitorService : Service() {
     private suspend fun tick() {
         val prefs = container.preferencesRepository.preferences.first()
         val hasSession = prefs.deviceToken.trim().length == REQUIRED_TOKEN_LENGTH
-        val autoConnectActive = prefs.autoConnectEnabled && prefs.autoConnectApps.isNotEmpty()
+        val autoConnectApps = effectiveAutoConnectApps(prefs)
+        val autoDisconnectApps = effectiveAutoDisconnectApps(prefs)
+        val autoConnectActive = autoConnectApps.isNotEmpty()
         val autoDisconnectActive =
-            prefs.autoDisconnectEnabled && prefs.autoDisconnectApps.isNotEmpty()
+            autoDisconnectApps.isNotEmpty()
         val hasAutomation = autoConnectActive || autoDisconnectActive
 
         if (!hasSession || !hasAutomation) {
+            Log.i(
+                TAG,
+                "Automation monitor stopping: hasSession=$hasSession autoOn=$autoConnectActive autoOff=$autoDisconnectActive"
+            )
+            appendDebug(
+                "monitor stopping: hasSession=$hasSession autoOn=$autoConnectActive autoOff=$autoDisconnectActive"
+            )
             stopSelf()
             return
         }
 
-        val foregroundPackage = resolveForegroundPackage() ?: return
+        val foregroundPackage = resolveForegroundPackage() ?: run {
+            return
+        }
+        if (foregroundPackage != lastLoggedForegroundPackage) {
+            Log.i(TAG, "Foreground app: $foregroundPackage")
+            appendDebug("foreground: $foregroundPackage")
+            lastLoggedForegroundPackage = foregroundPackage
+        }
         if (foregroundPackage == packageName) return
 
-        if (autoDisconnectActive && prefs.autoDisconnectApps.contains(foregroundPackage)
+        if (autoDisconnectActive && autoDisconnectApps.contains(foregroundPackage)
         ) {
             val currentState = VpnStatusBus.status.value.state
-            if (currentState == ConnectionState.CONNECTED || currentState == ConnectionState.CONNECTING) {
-                container.vpnRepository.stopVpn()
-            }
+            Log.i(TAG, "Auto OFF matched $foregroundPackage, stopping VPN; currentState=$currentState")
+            appendDebug("auto off matched: $foregroundPackage state=$currentState")
+            container.vpnRepository.stopVpn()
+            appendDebug("auto off stop requested: $foregroundPackage")
             return
         }
 
-        if (!autoConnectActive || !prefs.autoConnectApps.contains(foregroundPackage)) {
+        if (!autoConnectActive || !autoConnectApps.contains(foregroundPackage)) {
             return
         }
 
@@ -119,42 +141,74 @@ class AppAutomationMonitorService : Service() {
 
         if (VpnService.prepare(this) != null) {
             Log.i(TAG, "VPN permission is required before automation can connect")
+            appendDebug("vpn permission required")
             return
         }
 
+        Log.i(TAG, "Auto ON matched $foregroundPackage, starting VPN")
+        appendDebug("auto on matched: $foregroundPackage")
         container.vpnRepository.refreshAccessBundle()
             .onSuccess { access -> startVpnFromAutomation(access, prefs) }
-            .onFailure { error -> Log.w(TAG, "Auto-connect access refresh failed", error) }
+            .onFailure { error ->
+                Log.w(TAG, "Auto-connect access refresh failed", error)
+                appendDebug("auto on refresh failed: ${error.message}")
+            }
     }
 
     private fun startVpnFromAutomation(access: ResolvedNodeAccess, prefs: UserPreferences) {
+        val profile = activeProfile(access, prefs)
         container.vpnRepository.startVpn(
-            node = access.node,
-            xrayConfig = access.xrayConfig,
-            routingPolicy = effectiveRoutingPolicy(access, prefs),
-            automationPolicy = effectiveAutomationPolicy(prefs),
+            node = profile.node,
+            xrayConfig = profile.xrayConfig,
+            routingPolicy = effectiveRoutingPolicy(profile, prefs),
+            automationPolicy = effectiveAutomationPolicy(profile, prefs),
             autoDisconnectApps = emptySet(),
             latencyMs = -1L
         )
     }
 
     private fun effectiveRoutingPolicy(
-        access: ResolvedNodeAccess,
+        profile: ResolvedAccessProfile,
         prefs: UserPreferences
     ): AppRoutingPolicy {
+        if (prefs.awayModeEnabled) {
+            val awayApps = effectiveAutoConnectApps(prefs)
+            return if (awayApps.isEmpty()) {
+                AppRoutingPolicy(mode = AppRoutingPolicy.MODE_ALL_APPS)
+            } else {
+                profile.routingPolicy.copy(
+                    mode = AppRoutingPolicy.MODE_SELECTED_APPS,
+                    includedApps = awayApps,
+                    excludedApps = emptySet()
+                )
+            }
+        }
+
         val routingApps = prefs.routingApps.normalizedPackages()
         if (!prefs.routingEnabled || routingApps.isEmpty()) {
             return AppRoutingPolicy(mode = AppRoutingPolicy.MODE_ALL_APPS)
         }
 
-        return access.routingPolicy.copy(
+        return profile.routingPolicy.copy(
             mode = AppRoutingPolicy.MODE_SELECTED_APPS,
             includedApps = routingApps,
             excludedApps = emptySet()
         )
     }
 
-    private fun effectiveAutomationPolicy(prefs: UserPreferences): AppAutomationPolicy {
+    private fun effectiveAutomationPolicy(
+        profile: ResolvedAccessProfile,
+        prefs: UserPreferences
+    ): AppAutomationPolicy {
+        if (prefs.awayModeEnabled) {
+            val awayApps = effectiveAutoConnectApps(prefs)
+            return profile.automationPolicy.copy(
+                autoConnectApps = awayApps,
+                autoDisconnectApps = emptySet(),
+                requiresUsageAccess = awayApps.isNotEmpty()
+            )
+        }
+
         return AppAutomationPolicy(
             autoConnectApps = if (prefs.autoConnectEnabled) {
                 prefs.autoConnectApps.normalizedPackages()
@@ -168,6 +222,43 @@ class AppAutomationMonitorService : Service() {
             },
             requiresUsageAccess = prefs.autoConnectEnabled || prefs.autoDisconnectEnabled
         )
+    }
+
+    private fun activeProfile(
+        access: ResolvedNodeAccess,
+        prefs: UserPreferences
+    ): ResolvedAccessProfile {
+        if (prefs.awayModeEnabled) {
+            access.profiles[AWAY_PROFILE_ID]?.let { return it }
+        }
+
+        return access.profiles[NORMAL_PROFILE_ID] ?: ResolvedAccessProfile(
+            id = NORMAL_PROFILE_ID,
+            label = "Обычный режим",
+            node = access.node,
+            xrayConfig = access.xrayConfig,
+            protocol = access.protocol,
+            routingPolicy = access.routingPolicy,
+            automationPolicy = access.automationPolicy
+        )
+    }
+
+    private fun effectiveAutoConnectApps(prefs: UserPreferences): Set<String> {
+        return if (prefs.awayModeEnabled) {
+            prefs.autoDisconnectApps.normalizedPackages()
+        } else if (prefs.autoConnectEnabled) {
+            prefs.autoConnectApps.normalizedPackages()
+        } else {
+            emptySet()
+        }
+    }
+
+    private fun effectiveAutoDisconnectApps(prefs: UserPreferences): Set<String> {
+        return if (prefs.awayModeEnabled || !prefs.autoDisconnectEnabled) {
+            emptySet()
+        } else {
+            prefs.autoDisconnectApps.normalizedPackages()
+        }
     }
 
     private fun resolveForegroundPackage(): String? {
@@ -211,7 +302,7 @@ class AppAutomationMonitorService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("App automation is active")
+            .setContentText("Автоматическое подключение активно")
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -235,6 +326,13 @@ class AppAutomationMonitorService : Service() {
             .toSet()
     }
 
+    private fun appendDebug(message: String) {
+        runCatching {
+            filesDir.resolve("automation_debug.log")
+                .appendText("${System.currentTimeMillis()} $message\n")
+        }
+    }
+
     companion object {
         private const val TAG = "ZnetAutomation"
         private const val CHANNEL_ID = "znet_automation_channel"
@@ -243,6 +341,8 @@ class AppAutomationMonitorService : Service() {
         private const val MONITOR_INTERVAL_MS = 1_500L
         private const val FOREGROUND_LOOKBACK_MS = 10_000L
         private const val AUTO_CONNECT_COOLDOWN_MS = 15_000L
+        private const val NORMAL_PROFILE_ID = "normal"
+        private const val AWAY_PROFILE_ID = "away"
 
         const val ACTION_START = "com.znet.app.action.START_AUTOMATION"
         const val ACTION_STOP = "com.znet.app.action.STOP_AUTOMATION"

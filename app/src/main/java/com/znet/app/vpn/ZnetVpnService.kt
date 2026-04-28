@@ -38,6 +38,7 @@ class ZnetVpnService : VpnService() {
     private var allowedApps: Set<String> = emptySet()
     private var disallowedApps: Set<String> = emptySet()
     private var autoDisconnectApps: Set<String> = emptySet()
+    private var lastLoggedForegroundPackage: String? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -76,6 +77,7 @@ class ZnetVpnService : VpnService() {
             }
 
             ACTION_DISCONNECT -> {
+                startForeground(NOTIFICATION_ID, buildNotification("Disconnecting..."))
                 serviceScope.launch {
                     disconnect(ConnectionState.DISCONNECTED, null)
                     stopSelf()
@@ -116,6 +118,9 @@ class ZnetVpnService : VpnService() {
             this.allowedApps = allowedApps
             this.disallowedApps = disallowedApps
             autoDisconnectApps = autoApps
+            appendDebug(
+                "vpn connect requested allowed=${this.allowedApps.size} disallowed=${this.disallowedApps.size} autoOff=${autoDisconnectApps.size}"
+            )
             establishTun(
                 allowedApps = this.allowedApps,
                 disallowedApps = this.disallowedApps
@@ -192,6 +197,7 @@ class ZnetVpnService : VpnService() {
 
     private suspend fun disconnect(state: ConnectionState, message: String?) {
         monitorJobActive = false
+        appendDebug("vpn disconnect state=$state message=${message.orEmpty()}")
 
         runCatching {
             xrayEngine.stop()
@@ -214,11 +220,17 @@ class ZnetVpnService : VpnService() {
     private fun startAppMonitor() {
         if (monitorJobActive || autoDisconnectApps.isEmpty()) return
         monitorJobActive = true
+        appendDebug("vpn monitor started autoOff=${autoDisconnectApps.size}")
 
         serviceScope.launch {
             while (isActive && monitorJobActive) {
                 val foregroundPackage = resolveForegroundPackage()
+                if (!foregroundPackage.isNullOrBlank() && foregroundPackage != lastLoggedForegroundPackage) {
+                    appendDebug("vpn foreground: $foregroundPackage")
+                    lastLoggedForegroundPackage = foregroundPackage
+                }
                 if (!foregroundPackage.isNullOrBlank() && autoDisconnectApps.contains(foregroundPackage)) {
+                    appendDebug("vpn auto off matched: $foregroundPackage")
                     disconnect(
                         state = ConnectionState.PAUSED_BY_RULE,
                         message = "VPN paused for $foregroundPackage"
@@ -258,6 +270,13 @@ class ZnetVpnService : VpnService() {
 
         val usage = manager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, start, end)
         return usage.maxByOrNull { it.lastTimeUsed }?.packageName
+    }
+
+    private fun appendDebug(message: String) {
+        runCatching {
+            filesDir.resolve("automation_debug.log")
+                .appendText("${System.currentTimeMillis()} $message\n")
+        }
     }
 
     private fun buildNotification(content: String): Notification {

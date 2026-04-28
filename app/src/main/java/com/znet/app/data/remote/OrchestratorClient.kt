@@ -52,8 +52,8 @@ class OrchestratorClient(
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val normalizedBase = baseUrl.trimEnd('/')
-            require(normalizedBase.isNotBlank()) { "Billing API URL is empty" }
-            require(token.isNotBlank()) { "Token is empty" }
+            require(normalizedBase.isNotBlank()) { "API биллинга не настроен" }
+            require(token.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val endpoint = "$normalizedBase$TOKEN_AUTH_PATH".toHttpUrl()
             executeTokenAuthRequest(endpoint, token.trim(), deviceData)
@@ -92,7 +92,7 @@ class OrchestratorClient(
                 }
 
                 throw TokenAuthRequestException(
-                    message = apiMessage ?: "Token auth request failed: ${response.code}",
+                    message = apiMessage ?: "Не удалось проверить токен: ${response.code}",
                     statusCode = response.code
                 )
             }
@@ -102,7 +102,7 @@ class OrchestratorClient(
     }
 
     private fun parseTokenAccessResponse(rawBody: String): TokenAccessResponse {
-        require(rawBody.isNotBlank()) { "Token auth response is empty" }
+        require(rawBody.isNotBlank()) { "Пустой ответ биллинга" }
         val root = json.parseToJsonElement(rawBody).jsonObject
         throwEnvelopeErrorIfPresent(root)
 
@@ -120,6 +120,10 @@ class OrchestratorClient(
             ?: payload.objectOrNull("automation_policy", "automationPolicy")
             ?: result?.objectOrNull("automation_policy", "automationPolicy")
             ?: root.objectOrNull("automation_policy", "automationPolicy")
+        val connectionProfiles = connection?.objectOrNull("profiles", "connectionProfiles")
+            ?: payload.objectOrNull("profiles", "connectionProfiles")
+            ?: result?.objectOrNull("profiles", "connectionProfiles")
+            ?: root.objectOrNull("profiles", "connectionProfiles")
 
         val device = app?.objectOrNull("device")
         val deviceToken = app?.stringOrNull("token", "device_token", "deviceToken")
@@ -183,6 +187,7 @@ class OrchestratorClient(
             connectionProtocol = connection?.stringOrNull("protocol"),
             routingPolicy = parseRoutingPolicy(routingPolicy),
             automationPolicy = parseAutomationPolicy(automationPolicy),
+            profiles = parseConnectionProfiles(connectionProfiles),
             serviceTitle = service?.stringOrNull("title", "name"),
             serviceExpiresAt = service?.stringOrNull("expires_at", "expiresAt"),
             serviceDaysRemaining = service?.intOrNull("days_remaining", "daysRemaining")
@@ -297,6 +302,41 @@ class OrchestratorClient(
         )
     }
 
+    private fun parseConnectionProfiles(profiles: JsonObject?): Map<String, AccessConnectionProfile> {
+        if (profiles == null) {
+            return emptyMap()
+        }
+
+        return profiles.entries.mapNotNull { (id, element) ->
+            val profile = element as? JsonObject ?: return@mapNotNull null
+            val config = profile.stringOrNull(
+                "runtimePayload",
+                "runtime_payload",
+                "payload",
+                "xray_config",
+                "xrayConfig",
+                "config"
+            )
+            val ready = profile.booleanOrNull("ready") ?: !config.isNullOrBlank()
+            id to AccessConnectionProfile(
+                id = profile.stringOrNull("id") ?: id,
+                label = profile.stringOrNull("label", "name"),
+                enabled = profile.booleanOrNull("enabled") ?: ready,
+                ready = ready,
+                xrayConfig = config,
+                protocol = profile.stringOrNull("protocol"),
+                nodeId = profile.stringOrNull("nodeId", "node_id"),
+                nodeName = profile.stringOrNull("nodeLabel", "node_label", "nodeName", "node_name", "name"),
+                country = profile.stringOrNull("nodeCountry", "node_country", "country"),
+                city = profile.stringOrNull("nodeHost", "node_host", "city"),
+                flagEmoji = profile.stringOrNull("flagEmoji", "flag_emoji"),
+                routingPolicy = parseRoutingPolicy(profile.objectOrNull("routingPolicy", "routing_policy")),
+                automationPolicy = parseAutomationPolicy(profile.objectOrNull("automationPolicy", "automation_policy")),
+                error = profile.stringOrNull("error")
+            )
+        }.toMap()
+    }
+
     private fun JsonObject.stringSetOrNull(vararg keys: String): Set<String> {
         keys.forEach { key ->
             val element = this[key] ?: return@forEach
@@ -330,7 +370,7 @@ class OrchestratorClient(
 
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
-        const val INVALID_TOKEN_MESSAGE = "Invalid token"
+        const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
     }
 }
 
@@ -365,9 +405,27 @@ data class TokenAccessResponse(
     val connectionProtocol: String? = null,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
+    val profiles: Map<String, AccessConnectionProfile> = emptyMap(),
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
+)
+
+data class AccessConnectionProfile(
+    val id: String,
+    val label: String? = null,
+    val enabled: Boolean = true,
+    val ready: Boolean = false,
+    val xrayConfig: String? = null,
+    val protocol: String? = null,
+    val nodeId: String? = null,
+    val nodeName: String? = null,
+    val country: String? = null,
+    val city: String? = null,
+    val flagEmoji: String? = null,
+    val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
+    val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
+    val error: String? = null
 )
 
 data class AppRoutingPolicy(

@@ -31,6 +31,7 @@ data class UserPreferences(
     val routingEnabled: Boolean,
     val autoConnectEnabled: Boolean,
     val autoDisconnectEnabled: Boolean,
+    val awayModeEnabled: Boolean,
     val policyDefaultsApplied: Boolean,
     val adaptiveEnabled: Boolean
 )
@@ -56,6 +57,7 @@ class UserPreferencesRepository(
         val routingEnabled = booleanPreferencesKey("routing_enabled")
         val autoConnectEnabled = booleanPreferencesKey("auto_connect_enabled")
         val autoDisconnectEnabled = booleanPreferencesKey("auto_disconnect_enabled")
+        val awayModeEnabled = booleanPreferencesKey("away_mode_enabled")
         val policyDefaultsApplied = booleanPreferencesKey("policy_defaults_applied")
         val adaptiveEnabled = booleanPreferencesKey("adaptive_enabled")
     }
@@ -79,6 +81,7 @@ class UserPreferencesRepository(
                 routingEnabled = prefs[Keys.routingEnabled] ?: true,
                 autoConnectEnabled = prefs[Keys.autoConnectEnabled] ?: true,
                 autoDisconnectEnabled = prefs[Keys.autoDisconnectEnabled] ?: true,
+                awayModeEnabled = prefs[Keys.awayModeEnabled] ?: false,
                 policyDefaultsApplied = prefs[Keys.policyDefaultsApplied] ?: false,
                 adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true
             )
@@ -168,6 +171,12 @@ class UserPreferencesRepository(
     suspend fun setAutoDisconnectEnabled(enabled: Boolean) {
         context.userPrefsStore.edit { prefs ->
             prefs[Keys.autoDisconnectEnabled] = enabled
+        }
+    }
+
+    suspend fun setAwayModeEnabled(enabled: Boolean) {
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.awayModeEnabled] = enabled
         }
     }
 

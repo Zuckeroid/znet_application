@@ -58,7 +58,7 @@ class VpnRepository(
             val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
             val sessionToken = prefs.deviceToken.trim()
 
-            require(sessionToken.isNotBlank()) { "Session token is missing" }
+            require(sessionToken.isNotBlank()) { INVALID_TOKEN_MESSAGE }
             require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val deviceData = buildDeviceRegistrationData()
@@ -163,7 +163,11 @@ class VpnRepository(
         val intent = Intent(context, ZnetVpnService::class.java).apply {
             action = ZnetVpnService.ACTION_DISCONNECT
         }
-        context.startService(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
     }
 
     fun startAutomationMonitor() {
@@ -230,7 +234,7 @@ class VpnRepository(
         val deviceToken = access.deviceToken
             ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?: throw InvalidTokenException("Device session token is missing")
+            ?: throw InvalidTokenException(INVALID_TOKEN_MESSAGE)
         preferencesRepository.setDeviceSession(deviceToken)
         return resolveNodeAccess(access)
     }
@@ -251,7 +255,7 @@ class VpnRepository(
 
     private fun resolveNodeAccess(access: TokenAccessResponse): ResolvedNodeAccess {
         if (access.hasActiveAccess == false) {
-            throw NoActiveAccessException("No active access for this device")
+            throw NoActiveAccessException("Нет активного доступа для этого устройства")
         }
         if (access.connectionReady == false) {
             throw AccessNotReadyException(ACCESS_NOT_READY_MESSAGE)
@@ -311,7 +315,7 @@ class VpnRepository(
 
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
-        const val INVALID_TOKEN_MESSAGE = "Invalid token"
-        const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
+        const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
+        const val ACCESS_NOT_READY_MESSAGE = "Доступ пока не готов"
     }
 }

@@ -1,6 +1,10 @@
 package com.znet.app.viewmodel
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -18,6 +22,7 @@ import com.znet.app.data.remote.AccessNotReadyException
 import com.znet.app.data.remote.InvalidTokenException
 import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.repo.ResolvedNodeAccess
+import com.znet.app.data.repo.ResolvedAccessProfile
 import com.znet.app.data.repo.VpnRepository
 import com.znet.app.vpn.VpnStatus
 import com.znet.app.vpn.VpnStatusBus
@@ -42,6 +47,8 @@ data class MainUiState(
     val routingEnabled: Boolean = true,
     val autoConnectEnabled: Boolean = true,
     val autoDisconnectEnabled: Boolean = true,
+    val awayModeEnabled: Boolean = false,
+    val awayModeAvailable: Boolean = false,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val adaptiveEnabled: Boolean = true,
@@ -56,6 +63,7 @@ data class MainUiState(
     val authError: String? = null,
     val authInProgress: Boolean = false,
     val pendingAutoConnect: Boolean = false,
+    val vpnTransportActive: Boolean = false,
     val isBusy: Boolean = false,
     val message: String? = null
 )
@@ -71,16 +79,20 @@ class MainViewModel(
     private val busy = MutableStateFlow(false)
     private val message = MutableStateFlow<String?>(null)
     private val isAuthenticated = MutableStateFlow(false)
-    private val sessionRestoreInProgress = MutableStateFlow(false)
+    private val sessionRestoreInProgress = MutableStateFlow(true)
 
     private val authTokenInput = MutableStateFlow("")
     private val authError = MutableStateFlow<String?>(null)
 
     private val authInProgress = MutableStateFlow(false)
     private val pendingAutoConnect = MutableStateFlow(false)
+    private val vpnTransportActive = MutableStateFlow(false)
     private val resolvedAccess = MutableStateFlow<ResolvedNodeAccess?>(null)
     private val sessionValidationInProgress = MutableStateFlow(false)
     private var usageAccessPromptShown = false
+    private val connectivityManager =
+        application.getSystemService(Application.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private var vpnNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val baseUiState = combine(
         preferencesRepository.preferences,
@@ -94,7 +106,8 @@ class MainViewModel(
         authError,
         authInProgress,
         pendingAutoConnect,
-        resolvedAccess
+        resolvedAccess,
+        vpnTransportActive
     ) { values ->
         val prefs = values[0] as UserPreferences
         val status = values[1] as VpnStatus
@@ -108,8 +121,12 @@ class MainViewModel(
         val authorizing = values[9] as Boolean
         val shouldAutoConnect = values[10] as Boolean
         val access = values[11] as ResolvedNodeAccess?
+        val hasVpnTransport = values[12] as Boolean
 
-        val selectedNode = nodes.firstOrNull { it.id == prefs.selectedNodeId } ?: status.currentNode
+        val activeProfile = access?.let { activeProfile(it, prefs) }
+        val selectedNode = activeProfile?.node
+            ?: nodes.firstOrNull { it.id == prefs.selectedNodeId }
+            ?: status.currentNode
         MainUiState(
             connectionState = status.state,
             nodes = nodes,
@@ -122,11 +139,13 @@ class MainViewModel(
             routingEnabled = prefs.routingEnabled,
             autoConnectEnabled = prefs.autoConnectEnabled,
             autoDisconnectEnabled = prefs.autoDisconnectEnabled,
-            routingPolicy = access?.routingPolicy ?: AppRoutingPolicy(),
-            automationPolicy = access?.automationPolicy ?: AppAutomationPolicy(),
+            awayModeEnabled = prefs.awayModeEnabled,
+            awayModeAvailable = access?.profiles?.containsKey(AWAY_PROFILE_ID) == true,
+            routingPolicy = activeProfile?.routingPolicy ?: access?.routingPolicy ?: AppRoutingPolicy(),
+            automationPolicy = activeProfile?.automationPolicy ?: access?.automationPolicy ?: AppAutomationPolicy(),
             adaptiveEnabled = prefs.adaptiveEnabled,
             latencyMs = status.latencyMs,
-            protocol = access?.protocol,
+            protocol = activeProfile?.protocol ?: access?.protocol,
             serviceTitle = access?.serviceTitle,
             serviceExpiresAt = access?.serviceExpiresAt,
             serviceDaysRemaining = access?.serviceDaysRemaining,
@@ -136,6 +155,7 @@ class MainViewModel(
             authError = currentAuthError,
             authInProgress = authorizing,
             pendingAutoConnect = shouldAutoConnect,
+            vpnTransportActive = hasVpnTransport,
             isBusy = isBusyValue,
             message = status.errorMessage
         )
@@ -151,15 +171,24 @@ class MainViewModel(
 
     init {
         loadInstalledApps()
+        startVpnEnvironmentMonitor()
         viewModelScope.launch {
             preferencesRepository.migrateLegacySessionTokenIfNeeded()
             restorePersistedSession()
         }
     }
 
+    override fun onCleared() {
+        vpnNetworkCallback?.let { callback ->
+            runCatching { connectivityManager.unregisterNetworkCallback(callback) }
+        }
+        vpnNetworkCallback = null
+        super.onCleared()
+    }
+
     fun refreshNodes() {
         if (!isAuthenticated.value) {
-            message.value = "Sign in first"
+            message.value = "Сначала войдите по токену"
             return
         }
         viewModelScope.launch {
@@ -237,23 +266,27 @@ class MainViewModel(
         val persistedToken = currentSessionToken()
         if (persistedToken.length != REQUIRED_TOKEN_LENGTH) {
             authTokenInput.value = ""
+            sessionRestoreInProgress.value = false
             return
         }
 
         sessionRestoreInProgress.value = true
-        val restore = vpnRepository.refreshAccessBundle()
-        restore.fold(
-            onSuccess = { access ->
-                applyAuthenticatedAccess(
-                    access = access,
-                    autoConnect = false
-                )
-            },
-            onFailure = { error ->
-                handleStartupRestoreFailure(error)
-            }
-        )
-        sessionRestoreInProgress.value = false
+        try {
+            val restore = vpnRepository.refreshAccessBundle()
+            restore.fold(
+                onSuccess = { access ->
+                    applyAuthenticatedAccess(
+                        access = access,
+                        autoConnect = false
+                    )
+                },
+                onFailure = { error ->
+                    handleStartupRestoreFailure(error)
+                }
+            )
+        } finally {
+            sessionRestoreInProgress.value = false
+        }
     }
 
     private suspend fun submitTokenAuth() {
@@ -358,11 +391,26 @@ class MainViewModel(
         }
     }
 
+    fun setAwayModeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setAwayModeEnabled(enabled)
+            syncAutomationMonitor()
+            val isRunning =
+                VpnStatusBus.status.value.state == ConnectionState.CONNECTED ||
+                    VpnStatusBus.status.value.state == ConnectionState.CONNECTING
+            if (isRunning) {
+                vpnRepository.stopVpn()
+                delay(700)
+                connect()
+            }
+        }
+    }
+
     fun resetAppPoliciesToRecommended() {
         viewModelScope.launch {
             val access = resolvedAccess.value
             if (access == null) {
-                message.value = "Access profile is not ready"
+                message.value = "Профиль доступа еще не готов"
                 return@launch
             }
             preferencesRepository.resetPolicyDefaults(
@@ -370,7 +418,7 @@ class MainViewModel(
                 automationPolicy = access.automationPolicy
             )
             syncAutomationMonitor()
-            message.value = "Recommended app policies restored"
+            message.value = "Рекомендованные списки восстановлены"
         }
     }
 
@@ -378,7 +426,7 @@ class MainViewModel(
         viewModelScope.launch {
             val prefs: UserPreferences = preferencesRepository.preferences.first()
             if (!isAuthenticated.value && prefs.deviceToken.length != REQUIRED_TOKEN_LENGTH) {
-                message.value = "Sign in first"
+                message.value = "Сначала войдите по токену"
                 return@launch
             }
 
@@ -390,16 +438,18 @@ class MainViewModel(
                         access = access,
                         autoConnect = false
                     )
+                    val profile = activeProfile(access, prefs)
                     val effectiveRoutingPolicy = effectiveRoutingPolicy(
-                        access = access,
+                        profile = profile,
                         prefs = prefs
                     )
                     val effectiveAutomationPolicy = effectiveAutomationPolicy(
+                        profile = profile,
                         prefs = prefs
                     )
                     vpnRepository.startVpn(
-                        node = access.node,
-                        xrayConfig = access.xrayConfig,
+                        node = profile.node,
+                        xrayConfig = profile.xrayConfig,
                         routingPolicy = effectiveRoutingPolicy,
                         automationPolicy = effectiveAutomationPolicy,
                         autoDisconnectApps = emptySet(),
@@ -421,6 +471,10 @@ class MainViewModel(
 
     fun disconnect() {
         vpnRepository.stopVpn()
+    }
+
+    fun refreshVpnEnvironment() {
+        vpnTransportActive.value = detectVpnTransport()
     }
 
     fun clearMessage() {
@@ -449,7 +503,10 @@ class MainViewModel(
             return
         }
 
-        enterAuthenticatedPendingState(error)
+        enterUnauthenticatedRestoreFailure(error)
+        if (error is AccessNotReadyException) {
+            retryPendingAccessUntilReady(autoConnect = false)
+        }
     }
 
     private suspend fun handleForegroundValidationFailure(error: Throwable) {
@@ -492,8 +549,11 @@ class MainViewModel(
             automationPolicy = access.automationPolicy
         )
         resolvedAccess.value = access
-        loadedNodes.value = listOf(access.node)
-        preferencesRepository.setSelectedNode(access.node.id)
+        loadedNodes.value = access.profiles.values
+            .map { profile -> profile.node }
+            .distinctBy { node -> node.id }
+            .ifEmpty { listOf(access.node) }
+        preferencesRepository.setSelectedNode(activeProfile(access, preferencesRepository.preferences.first()).node.id)
         isAuthenticated.value = true
         pendingAutoConnect.value = autoConnect
         syncAutomationMonitor()
@@ -502,15 +562,28 @@ class MainViewModel(
     }
 
     private fun effectiveRoutingPolicy(
-        access: ResolvedNodeAccess,
+        profile: ResolvedAccessProfile,
         prefs: UserPreferences
     ): AppRoutingPolicy {
+        if (prefs.awayModeEnabled) {
+            val awayApps = prefs.autoDisconnectApps.normalizedPackages()
+            return if (awayApps.isEmpty()) {
+                AppRoutingPolicy(mode = AppRoutingPolicy.MODE_ALL_APPS)
+            } else {
+                profile.routingPolicy.copy(
+                    mode = AppRoutingPolicy.MODE_SELECTED_APPS,
+                    includedApps = awayApps,
+                    excludedApps = emptySet()
+                )
+            }
+        }
+
         val routingApps = prefs.routingApps.normalizedPackages()
         if (!prefs.routingEnabled || routingApps.isEmpty()) {
             return AppRoutingPolicy(mode = AppRoutingPolicy.MODE_ALL_APPS)
         }
 
-        return access.routingPolicy.copy(
+        return profile.routingPolicy.copy(
             mode = AppRoutingPolicy.MODE_SELECTED_APPS,
             includedApps = routingApps,
             excludedApps = emptySet()
@@ -518,8 +591,18 @@ class MainViewModel(
     }
 
     private fun effectiveAutomationPolicy(
+        profile: ResolvedAccessProfile,
         prefs: UserPreferences
     ): AppAutomationPolicy {
+        if (prefs.awayModeEnabled) {
+            val awayApps = prefs.autoDisconnectApps.normalizedPackages()
+            return profile.automationPolicy.copy(
+                autoConnectApps = awayApps,
+                autoDisconnectApps = emptySet(),
+                requiresUsageAccess = awayApps.isNotEmpty()
+            )
+        }
+
         return AppAutomationPolicy(
             autoConnectApps = if (prefs.autoConnectEnabled) {
                 prefs.autoConnectApps.normalizedPackages()
@@ -539,6 +622,25 @@ class MainViewModel(
         return map { item -> item.trim() }
             .filter { item -> item.isNotBlank() }
             .toSet()
+    }
+
+    private fun activeProfile(
+        access: ResolvedNodeAccess,
+        prefs: UserPreferences
+    ): ResolvedAccessProfile {
+        if (prefs.awayModeEnabled) {
+            access.profiles[AWAY_PROFILE_ID]?.let { return it }
+        }
+
+        return access.profiles[NORMAL_PROFILE_ID] ?: ResolvedAccessProfile(
+            id = NORMAL_PROFILE_ID,
+            label = "Обычный режим",
+            node = access.node,
+            xrayConfig = access.xrayConfig,
+            protocol = access.protocol,
+            routingPolicy = access.routingPolicy,
+            automationPolicy = access.automationPolicy
+        )
     }
 
     private fun enterAuthenticatedPendingState(error: Throwable) {
@@ -572,7 +674,7 @@ class MainViewModel(
                             message.value = if (attempt + 1 >= PENDING_ACCESS_RETRY_COUNT) {
                                 ACCESS_NOT_READY_MESSAGE
                             } else {
-                                "Preparing device access..."
+                                "Готовим доступ устройства..."
                             }
                             false
                         }
@@ -598,6 +700,18 @@ class MainViewModel(
         message.value = null
     }
 
+    private fun enterUnauthenticatedRestoreFailure(error: Throwable) {
+        resolvedAccess.value = null
+        loadedNodes.value = emptyList()
+        isAuthenticated.value = false
+        pendingAutoConnect.value = false
+        authError.value = null
+        message.value = when (error) {
+            is AccessNotReadyException -> ACCESS_NOT_READY_MESSAGE
+            else -> error.message ?: "Could not verify device access"
+        }
+    }
+
     private suspend fun invalidateSession(
         error: Throwable,
         clearMessage: Boolean = false
@@ -618,10 +732,14 @@ class MainViewModel(
     private suspend fun syncAutomationMonitor() {
         val prefs = preferencesRepository.preferences.first()
         val autoConnectActive =
-            prefs.autoConnectEnabled &&
-                prefs.autoConnectApps.isNotEmpty()
+            if (prefs.awayModeEnabled) {
+                prefs.autoDisconnectApps.isNotEmpty()
+            } else {
+                prefs.autoConnectEnabled && prefs.autoConnectApps.isNotEmpty()
+            }
         val autoDisconnectActive =
-            prefs.autoDisconnectEnabled &&
+            !prefs.awayModeEnabled &&
+                prefs.autoDisconnectEnabled &&
                 prefs.autoDisconnectApps.isNotEmpty()
         val shouldRun =
             prefs.deviceToken.trim().length == REQUIRED_TOKEN_LENGTH &&
@@ -638,9 +756,17 @@ class MainViewModel(
             }
 
             usageAccessPromptShown = false
+            Log.i(
+                TAG,
+                "Starting automation monitor: autoOn=$autoConnectActive autoOff=$autoDisconnectActive"
+            )
             vpnRepository.startAutomationMonitor()
         } else {
             usageAccessPromptShown = false
+            Log.i(
+                TAG,
+                "Stopping automation monitor: token=${prefs.deviceToken.trim().length} autoOn=$autoConnectActive autoOff=$autoDisconnectActive"
+            )
             vpnRepository.stopAutomationMonitor()
         }
     }
@@ -649,12 +775,52 @@ class MainViewModel(
         return error is InvalidTokenException || error is NoActiveAccessException
     }
 
+    private fun startVpnEnvironmentMonitor() {
+        refreshVpnEnvironment()
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                refreshVpnEnvironment()
+            }
+
+            override fun onLost(network: Network) {
+                refreshVpnEnvironment()
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities
+            ) {
+                refreshVpnEnvironment()
+            }
+        }
+        runCatching {
+            connectivityManager.registerNetworkCallback(request, callback)
+            vpnNetworkCallback = callback
+        }.onFailure { error ->
+            Log.w(TAG, "VPN environment monitor is unavailable", error)
+        }
+    }
+
+    private fun detectVpnTransport(): Boolean {
+        return runCatching {
+            connectivityManager.allNetworks.any { network ->
+                connectivityManager.getNetworkCapabilities(network)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        }.getOrDefault(false)
+    }
+
     private companion object {
         const val TAG = "MainViewModel"
         const val REQUIRED_TOKEN_LENGTH = 32
         const val PENDING_ACCESS_RETRY_COUNT = 10
         const val PENDING_ACCESS_RETRY_DELAY_MS = 1_500L
-        const val INVALID_TOKEN_MESSAGE = "Invalid token"
-        const val ACCESS_NOT_READY_MESSAGE = "Access is not ready yet"
+        const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
+        const val ACCESS_NOT_READY_MESSAGE = "Доступ пока не готов"
+        const val NORMAL_PROFILE_ID = "normal"
+        const val AWAY_PROFILE_ID = "away"
     }
 }

@@ -1,6 +1,7 @@
 ﻿package com.znet.app.data.repo
 
 import com.znet.app.data.model.ServerNode
+import com.znet.app.data.remote.AccessConnectionProfile
 import com.znet.app.data.remote.AppAutomationPolicy
 import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.data.remote.TokenAccessResponse
@@ -22,25 +23,74 @@ data class ResolvedNodeAccess(
     val protocol: String? = null,
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
+    val profiles: Map<String, ResolvedAccessProfile> = emptyMap(),
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
+)
+
+data class ResolvedAccessProfile(
+    val id: String,
+    val label: String,
+    val node: ServerNode,
+    val xrayConfig: String,
+    val protocol: String? = null,
+    val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
+    val automationPolicy: AppAutomationPolicy = AppAutomationPolicy()
 )
 
 object NodeLinkConfigFactory {
     fun fromTokenAccess(access: TokenAccessResponse): ResolvedNodeAccess {
         val runtimeConfig = access.xrayConfig?.trim().orEmpty()
         require(runtimeConfig.isNotBlank()) { "Runtime config is missing" }
-
-        return ResolvedNodeAccess(
+        val normalProfile = ResolvedAccessProfile(
+            id = "normal",
+            label = "Обычный режим",
             node = buildNode(access, null),
             xrayConfig = normalizeRuntimeConfig(runtimeConfig),
             protocol = access.connectionProtocol,
             routingPolicy = access.routingPolicy,
-            automationPolicy = access.automationPolicy,
+            automationPolicy = access.automationPolicy
+        )
+        val profiles = linkedMapOf("normal" to normalProfile)
+        access.profiles.forEach { (id, profile) ->
+            val resolvedProfile = buildResolvedProfile(id, profile) ?: return@forEach
+            profiles[id] = resolvedProfile
+        }
+
+        return ResolvedNodeAccess(
+            node = normalProfile.node,
+            xrayConfig = normalProfile.xrayConfig,
+            protocol = normalProfile.protocol,
+            routingPolicy = normalProfile.routingPolicy,
+            automationPolicy = normalProfile.automationPolicy,
+            profiles = profiles,
             serviceTitle = access.serviceTitle,
             serviceExpiresAt = access.serviceExpiresAt,
             serviceDaysRemaining = access.serviceDaysRemaining
+        )
+    }
+
+    private fun buildResolvedProfile(
+        fallbackId: String,
+        profile: AccessConnectionProfile
+    ): ResolvedAccessProfile? {
+        if (!profile.enabled || !profile.ready) {
+            return null
+        }
+        val runtimeConfig = profile.xrayConfig?.trim().orEmpty()
+        if (runtimeConfig.isBlank()) {
+            return null
+        }
+
+        return ResolvedAccessProfile(
+            id = profile.id.ifBlank { fallbackId },
+            label = profile.label?.takeIf { it.isNotBlank() } ?: fallbackId,
+            node = buildNode(profile),
+            xrayConfig = normalizeRuntimeConfig(runtimeConfig),
+            protocol = profile.protocol,
+            routingPolicy = profile.routingPolicy,
+            automationPolicy = profile.automationPolicy
         )
     }
 
@@ -522,6 +572,26 @@ object NodeLinkConfigFactory {
             ),
             host = host,
             port = port
+        )
+    }
+
+    private fun buildNode(profile: AccessConnectionProfile): ServerNode {
+        val host = profile.city?.takeIf { it.isNotBlank() } ?: "unknown"
+        val generatedId = "${profile.id}-$host".lowercase()
+            .replace(Regex("[^a-z0-9-]"), "-")
+        return ServerNode(
+            id = profile.nodeId?.takeIf { it.isNotBlank() } ?: generatedId,
+            name = profile.nodeName?.takeIf { it.isNotBlank() }
+                ?: profile.label?.takeIf { it.isNotBlank() }
+                ?: "Znet node",
+            country = profile.country?.takeIf { it.isNotBlank() } ?: "Auto",
+            city = host,
+            flagEmoji = normalizeFlagEmoji(
+                rawFlag = profile.flagEmoji,
+                fallbackCountry = profile.country
+            ),
+            host = host,
+            port = 443
         )
     }
 
