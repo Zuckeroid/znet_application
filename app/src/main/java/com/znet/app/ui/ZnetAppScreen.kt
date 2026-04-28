@@ -96,6 +96,12 @@ private enum class BottomTab {
     Settings
 }
 
+private enum class SettingsSection(val title: String) {
+    Connection("Доступ"),
+    Apps("Приложения"),
+    Diagnostics("Диагностика")
+}
+
 private val NeonGreen = Color(0xFF5BFF74)
 private val NeonGreenSoft = Color(0x665BFF74)
 private val NeonMuted = Color(0xFF6D7D8A)
@@ -765,6 +771,44 @@ private fun NodeCard(
 }
 
 @Composable
+private fun SettingsSectionSelector(
+    selected: SettingsSection,
+    onSelected: (SettingsSection) -> Unit
+) {
+    val sections = remember {
+        listOf(
+            SettingsSection.Connection,
+            SettingsSection.Apps,
+            SettingsSection.Diagnostics
+        )
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        sections.forEach { section ->
+            val active = section == selected
+            Button(
+                onClick = { onSelected(section) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (active) NeonButtonBg else Color(0xFF071019),
+                    contentColor = if (active) NeonGreen else Color(0xFF92A6B6)
+                ),
+                border = BorderStroke(
+                    width = if (active) 1.2.dp else 1.dp,
+                    color = if (active) NeonButtonOutline else Color(0x3323333F)
+                )
+            ) {
+                Text(section.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     state: MainUiState,
     onAdaptiveChanged: (Boolean) -> Unit,
@@ -787,6 +831,12 @@ private fun SettingsScreen(
     val recommendedRoutingApps = recommendedRoutingPackages(state)
     val recommendedAutoOnApps = state.automationPolicy.autoConnectApps
     val recommendedAutoOffApps = state.automationPolicy.autoDisconnectApps
+    var selectedSettingsSectionName by rememberSaveable {
+        mutableStateOf(SettingsSection.Connection.name)
+    }
+    val selectedSettingsSection = runCatching {
+        SettingsSection.valueOf(selectedSettingsSectionName)
+    }.getOrDefault(SettingsSection.Connection)
     val znetVpnActive = state.connectionState == ConnectionState.CONNECTED ||
         state.connectionState == ConnectionState.CONNECTING
     val vpnDiagnosticTitle = when {
@@ -809,241 +859,273 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Настройки", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        SettingsSectionSelector(
+            selected = selectedSettingsSection,
+            onSelected = { section -> selectedSettingsSectionName = section.name }
+        )
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        when (selectedSettingsSection) {
+            SettingsSection.Connection -> {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text("Адаптивная сеть", color = Color.White)
-                    Switch(
-                        checked = state.adaptiveEnabled,
-                        onCheckedChange = onAdaptiveChanged
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
-                    onClick = onOpenUsageSettings,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NeonButtonBg,
-                        contentColor = NeonGreen
-                    ),
-                    border = BorderStroke(1.2.dp, NeonButtonOutline)
-                ) {
-                    Text("Разрешить доступ к активности")
-                }
-            }
-        }
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Уведомления", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (notificationsEnabled) {
-                        "Znet может показывать активный VPN и автоматику в шторке."
-                    } else {
-                        "Уведомления выключены, поэтому сервис работает без карточки в шторке."
-                    },
-                    color = if (notificationsEnabled) Color(0xFF92A6B6) else Color(0xFFFFC857),
-                    fontSize = 12.sp
-                )
-                Button(
-                    onClick = onOpenNotificationSettings,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NeonButtonBg,
-                        contentColor = NeonGreen
-                    ),
-                    border = BorderStroke(1.2.dp, NeonButtonOutline)
-                ) {
-                    Text("Настройки уведомлений")
-                }
-            }
-        }
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Подключение", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Приложение получает доступ только через токен из личного кабинета. Добавление устройств и управление ими происходит на стороне биллинга.",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Сервер доступа", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "API: ${state.apiBaseUrl.ifBlank { "не выбран" }}",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-                Text(
-                    "Личный кабинет: ${state.webBaseUrl}",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-                Text(
-                    "Пул доменов: доступ ${state.apiDomainCount}, сайт ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Политики приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Рекомендации пришли из оркестратора. Дальше это локальные настройки этого телефона.",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-                Text(
-                    "Маршрутизация: ${formatRoutingPolicy(state)}",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-                Text(
-                    "Auto ON: ${recommendedAutoOnApps.size} рекомендовано, Auto OFF: ${recommendedAutoOffApps.size} рекомендовано",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
-                )
-                Button(
-                    onClick = onResetPolicies,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NeonButtonBg,
-                        contentColor = NeonGreen
-                    ),
-                    border = BorderStroke(1.2.dp, NeonButtonOutline)
-                ) {
-                    Text("Сбросить к рекомендованным")
-                }
-            }
-        }
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Подключение", color = Color.White, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Российские приложения из Auto OFF будут идти через московскую ноду.",
+                            "Приложение получает доступ через токен из личного кабинета. Добавление устройств и управление ими происходит на стороне биллинга.",
                             color = Color(0xFF92A6B6),
                             fontSize = 12.sp
                         )
                     }
-                    Switch(
-                        checked = state.awayModeEnabled,
-                        enabled = state.awayModeAvailable,
-                        onCheckedChange = onAwayModeChanged
-                    )
                 }
-                if (!state.awayModeAvailable) {
-                    Text(
-                        "Нужна активная московская нода для режима «За границей».",
-                        color = Color(0xFFFFC857),
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        }
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
-            shape = RoundedCornerShape(14.dp)
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("VPN диагностика", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text(vpnDiagnosticTitle, color = if (state.vpnTransportActive || znetVpnActive) NeonGreen else Color.White)
-                Text(vpnDiagnosticText, color = Color(0xFF92A6B6), fontSize = 12.sp)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
                 ) {
-                    Button(
-                        onClick = onResetZnetVpn,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NeonButtonBg,
-                            contentColor = NeonGreen
-                        ),
-                        border = BorderStroke(1.2.dp, NeonButtonOutline)
-                    ) {
-                        Text("Сбросить Znet", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Сервер доступа", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Доступ: ${state.apiBaseUrl.ifBlank { "не выбран" }}",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "Личный кабинет: ${state.webBaseUrl}",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "Пул доменов: доступ ${state.apiDomainCount}, сайт ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
                     }
-                    Button(
-                        onClick = onOpenVpnSettings,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF101A24),
-                            contentColor = Color.White
-                        ),
-                        border = BorderStroke(1.dp, Color(0x3348FF70))
-                    ) {
-                        Text("Настройки VPN", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Российские приложения из Auto OFF будут идти через московскую ноду.",
+                                    color = Color(0xFF92A6B6),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Switch(
+                                checked = state.awayModeEnabled,
+                                enabled = state.awayModeAvailable,
+                                onCheckedChange = onAwayModeChanged
+                            )
+                        }
+                        if (!state.awayModeAvailable) {
+                            Text(
+                                "Нужна активная московская нода для режима «За границей».",
+                                color = Color(0xFFFFC857),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            SettingsSection.Apps -> {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Адаптивная сеть", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Znet будет использовать актуальный профиль доступа и выбранный режим подключения.",
+                                    color = Color(0xFF92A6B6),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Switch(
+                                checked = state.adaptiveEnabled,
+                                onCheckedChange = onAdaptiveChanged
+                            )
+                        }
+                    }
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Auto ON/OFF", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Для автоматического включения и выключения туннеля нужен доступ к активности приложений.",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Button(
+                            onClick = onOpenUsageSettings,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonButtonBg,
+                                contentColor = NeonGreen
+                            ),
+                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                        ) {
+                            Text("Разрешить доступ к активности")
+                        }
+                    }
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Правила приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Рекомендации пришли из оркестратора. Дальше это локальные настройки этого телефона.",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "Маршрутизация: ${formatRoutingPolicy(state)}",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "Auto ON: ${recommendedAutoOnApps.size} рекомендовано, Auto OFF: ${recommendedAutoOffApps.size} рекомендовано",
+                            color = Color(0xFF92A6B6),
+                            fontSize = 12.sp
+                        )
+                        Button(
+                            onClick = onResetPolicies,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonButtonBg,
+                                contentColor = NeonGreen
+                            ),
+                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                        ) {
+                            Text("Сбросить к рекомендованным")
+                        }
+                    }
+                }
+
+                AppPolicySection(
+                    title = "Маршрутизация",
+                    description = "Какие приложения идут через VPN. Если секция выключена, туннель работает для всех приложений.",
+                    enabled = state.routingEnabled,
+                    selectedPackages = state.routingApps,
+                    recommendedPackages = recommendedRoutingApps,
+                    apps = state.installedApps,
+                    onEnabledChanged = onRoutingEnabledChanged,
+                    onTogglePackage = onToggleRouting
+                )
+
+                AppPolicySection(
+                    title = "Auto ON",
+                    description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен доступ к активности.",
+                    enabled = state.autoConnectEnabled,
+                    selectedPackages = state.autoConnectApps,
+                    recommendedPackages = recommendedAutoOnApps,
+                    apps = state.installedApps,
+                    onEnabledChanged = onAutoConnectEnabledChanged,
+                    onTogglePackage = onToggleAutoConnect
+                )
+
+                AppPolicySection(
+                    title = "Auto OFF",
+                    description = "Какие приложения временно выключают VPN. Этот список имеет приоритет над Auto ON.",
+                    enabled = state.autoDisconnectEnabled,
+                    selectedPackages = state.autoDisconnectApps,
+                    recommendedPackages = recommendedAutoOffApps,
+                    apps = state.installedApps,
+                    onEnabledChanged = onAutoDisconnectEnabledChanged,
+                    onTogglePackage = onToggleAutoDisconnect
+                )
+            }
+
+            SettingsSection.Diagnostics -> {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Уведомления", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (notificationsEnabled) {
+                                "Znet может показывать активный VPN и автоматику в шторке."
+                            } else {
+                                "Уведомления выключены, поэтому сервис работает без карточки в шторке."
+                            },
+                            color = if (notificationsEnabled) Color(0xFF92A6B6) else Color(0xFFFFC857),
+                            fontSize = 12.sp
+                        )
+                        Button(
+                            onClick = onOpenNotificationSettings,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonButtonBg,
+                                contentColor = NeonGreen
+                            ),
+                            border = BorderStroke(1.2.dp, NeonButtonOutline)
+                        ) {
+                            Text("Настройки уведомлений")
+                        }
+                    }
+                }
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("VPN диагностика", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text(vpnDiagnosticTitle, color = if (state.vpnTransportActive || znetVpnActive) NeonGreen else Color.White)
+                        Text(vpnDiagnosticText, color = Color(0xFF92A6B6), fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onResetZnetVpn,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeonButtonBg,
+                                    contentColor = NeonGreen
+                                ),
+                                border = BorderStroke(1.2.dp, NeonButtonOutline)
+                            ) {
+                                Text("Сбросить Znet", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Button(
+                                onClick = onOpenVpnSettings,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF101A24),
+                                    contentColor = Color.White
+                                ),
+                                border = BorderStroke(1.dp, Color(0x3348FF70))
+                            ) {
+                                Text("Настройки VPN", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
                 }
             }
         }
-
-        AppPolicySection(
-            title = "Маршрутизация",
-            description = "Какие приложения идут через VPN. Если секция выключена, туннель работает для всех приложений.",
-            enabled = state.routingEnabled,
-            selectedPackages = state.routingApps,
-            recommendedPackages = recommendedRoutingApps,
-            apps = state.installedApps,
-            onEnabledChanged = onRoutingEnabledChanged,
-            onTogglePackage = onToggleRouting
-        )
-
-        AppPolicySection(
-            title = "Auto ON",
-            description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен доступ к активности.",
-            enabled = state.autoConnectEnabled,
-            selectedPackages = state.autoConnectApps,
-            recommendedPackages = recommendedAutoOnApps,
-            apps = state.installedApps,
-            onEnabledChanged = onAutoConnectEnabledChanged,
-            onTogglePackage = onToggleAutoConnect
-        )
-
-        AppPolicySection(
-            title = "Auto OFF",
-            description = "Какие приложения временно выключают VPN. Этот список имеет приоритет над Auto ON.",
-            enabled = state.autoDisconnectEnabled,
-            selectedPackages = state.autoDisconnectApps,
-            recommendedPackages = recommendedAutoOffApps,
-            apps = state.installedApps,
-            onEnabledChanged = onAutoDisconnectEnabledChanged,
-            onTogglePackage = onToggleAutoDisconnect
-        )
     }
 }
 
