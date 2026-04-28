@@ -4,5 +4,5 @@
     <string name="vpn_notification_channel">Znet</string>
     <string name="vpn_notification_title">Znet</string>
     <string name="vpn_notification_content">Подключение защищено</string>
-    <string name="automation_notification_title">Служба Auto ON/OFF активна</string>
+    <string name="automation_notification_title">Служба Auto ON/OFF ✅</string>
 </resources>
