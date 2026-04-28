@@ -269,7 +269,6 @@ fun ZnetAppScreen(
                 HomeScreen(
                     state = state,
                     onToggleVpn = { connectOrDisconnect() },
-                    onAwayModeChanged = viewModel::setAwayModeEnabled,
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -468,7 +467,6 @@ private fun TokenAuthScreen(
 private fun HomeScreen(
     state: MainUiState,
     onToggleVpn: () -> Unit,
-    onAwayModeChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val connected = state.connectionState == ConnectionState.CONNECTED
@@ -613,49 +611,6 @@ private fun HomeScreen(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(
-                    1.dp,
-                    if (state.awayModeEnabled) Color(0x5546FF6E) else Color(0x3323333F),
-                    RoundedCornerShape(16.dp)
-                ),
-            colors = CardDefaults.cardColors(containerColor = Color(0xDD09121A)),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = if (state.awayModeAvailable) {
-                                "Банки и сервисы из Auto OFF пойдут через российскую ноду."
-                            } else {
-                                "Профиль появится после настройки московской ноды в оркестраторе."
-                            },
-                            color = Color(0xFF90A4B5),
-                            fontSize = 12.sp
-                        )
-                    }
-                    Switch(
-                        checked = state.awayModeEnabled,
-                        enabled = state.awayModeAvailable,
-                        onCheckedChange = onAwayModeChanged
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -789,20 +744,33 @@ private fun SettingsSectionSelector(
     ) {
         sections.forEach { section ->
             val active = section == selected
-            Button(
-                onClick = { onSelected(section) },
-                modifier = Modifier.weight(1f),
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelected(section) },
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
+                colors = CardDefaults.cardColors(
                     containerColor = if (active) NeonButtonBg else Color(0xFF071019),
-                    contentColor = if (active) NeonGreen else Color(0xFF92A6B6)
                 ),
                 border = BorderStroke(
                     width = if (active) 1.2.dp else 1.dp,
                     color = if (active) NeonButtonOutline else Color(0x3323333F)
                 )
             ) {
-                Text(section.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = section.title,
+                        color = if (active) NeonGreen else Color(0xFF92A6B6),
+                        fontSize = 13.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
