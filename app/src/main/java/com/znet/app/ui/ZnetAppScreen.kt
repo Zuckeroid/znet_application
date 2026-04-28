@@ -607,17 +607,9 @@ private fun HomeScreen(
                 )
                 InfoRow(
                     label = "Осталось",
-                    value = formatDaysRemaining(state.serviceDaysRemaining)
+                    value = formatDaysRemaining(state.serviceDaysRemaining),
+                    caption = formatExpiryCaption(state.serviceExpiresAt)
                 )
-                formatExpiryCaption(state.serviceExpiresAt)?.let { expiresAt ->
-                    Text(
-                        text = expiresAt,
-                        color = Color(0xFF90A4B5),
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.End,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
             }
         }
     }
@@ -626,7 +618,8 @@ private fun HomeScreen(
 @Composable
 private fun InfoRow(
     label: String,
-    value: String
+    value: String,
+    caption: String? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -638,12 +631,24 @@ private fun InfoRow(
             color = Color(0xFF90A4B5)
         )
         Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = value,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = value,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!caption.isNullOrBlank()) {
+                Text(
+                    text = caption,
+                    color = Color(0xFF90A4B5),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
     Spacer(modifier = Modifier.height(6.dp))
 }
