@@ -54,18 +54,18 @@ class ZnetVpnService : VpnService() {
                     VpnStatusBus.update {
                         it.copy(
                             state = ConnectionState.ERROR,
-                            errorMessage = "Missing node or xray config"
+                            errorMessage = "Профиль подключения не готов"
                         )
                     }
                     return START_NOT_STICKY
                 }
 
                 val node = runCatching { json.decodeFromString<ServerNode>(nodeJson) }
-                    .getOrElse { parseError ->
+                    .getOrElse {
                         VpnStatusBus.update {
                             it.copy(
                                 state = ConnectionState.ERROR,
-                                errorMessage = parseError.message ?: "Node parse error"
+                                errorMessage = "Не удалось прочитать профиль сервера"
                             )
                         }
                         return START_NOT_STICKY
@@ -156,7 +156,7 @@ class ZnetVpnService : VpnService() {
                 it.copy(
                     state = ConnectionState.ERROR,
                     currentNode = node,
-                    errorMessage = error.message ?: "Connection failed"
+                    errorMessage = error.message ?: "Не удалось подключиться"
                 )
             }
             disconnect(ConnectionState.ERROR, error.message)
@@ -192,7 +192,7 @@ class ZnetVpnService : VpnService() {
                 }
 
             if (acceptedAllowedApps == 0) {
-                error("Routing policy has no installed allowed applications")
+                error("В выбранном списке нет установленных приложений")
             }
         } else {
             (disallowedApps + packageName).forEach { blockedPackage ->
@@ -204,7 +204,7 @@ class ZnetVpnService : VpnService() {
             }
         }
 
-        vpnInterface = builder.establish() ?: error("Failed to establish TUN interface")
+        vpnInterface = builder.establish() ?: error("Не удалось создать VPN-интерфейс")
     }
 
     private suspend fun disconnect(state: ConnectionState, message: String?) {
@@ -245,7 +245,7 @@ class ZnetVpnService : VpnService() {
                     appendDebug("vpn auto off matched: $foregroundPackage")
                     disconnect(
                         state = ConnectionState.PAUSED_BY_RULE,
-                        message = "VPN paused for $foregroundPackage"
+                        message = "Отключено правилом Auto OFF"
                     )
                     stopSelf()
                     return@launch

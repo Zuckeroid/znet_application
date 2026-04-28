@@ -477,8 +477,20 @@ private fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val connected = state.connectionState == ConnectionState.CONNECTED
-    val statusTitle = if (connected) "Znet подключен" else "Znet отключен"
-    val statusText = if (connected) "Соединение защищено" else "Нажмите для подключения"
+    val statusTitle = when (state.connectionState) {
+        ConnectionState.CONNECTED -> "Znet подключен"
+        ConnectionState.CONNECTING -> "Znet подключается"
+        ConnectionState.PAUSED_BY_RULE -> "Znet на паузе"
+        ConnectionState.ERROR -> "Znet не подключен"
+        ConnectionState.DISCONNECTED -> "Znet отключен"
+    }
+    val statusText = when (state.connectionState) {
+        ConnectionState.CONNECTED -> "Соединение защищено"
+        ConnectionState.CONNECTING -> "Готовим защищенное подключение"
+        ConnectionState.PAUSED_BY_RULE -> "Отключено правилом Auto OFF"
+        ConnectionState.ERROR -> state.message ?: "Проверьте подключение"
+        ConnectionState.DISCONNECTED -> "Нажмите для подключения"
+    }
 
     Column(
         modifier = modifier
@@ -946,7 +958,7 @@ private fun SettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Адаптивная сеть", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "Znet будет использовать актуальный профиль доступа и выбранный режим подключения.",
+                                    "Znet будет автоматически применять актуальные настройки подключения.",
                                     color = Color(0xFF92A6B6),
                                     fontSize = 12.sp
                                 )
@@ -990,7 +1002,7 @@ private fun SettingsScreen(
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Правила приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Рекомендации пришли из оркестратора. Дальше это локальные настройки этого телефона.",
+                            "Рекомендации пришли с сервера. Дальше это локальные настройки этого телефона.",
                             color = Color(0xFF92A6B6),
                             fontSize = 12.sp
                         )
