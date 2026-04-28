@@ -215,7 +215,7 @@ class MainViewModel(
                     if (isInvalidSessionFailure(err)) {
                         invalidateSession(err)
                     } else {
-                        message.value = err.message ?: "Failed to refresh access"
+                        message.value = err.message ?: "Не удалось обновить доступ"
                     }
                 }
             )
@@ -471,7 +471,7 @@ class MainViewModel(
                     if (isInvalidSessionFailure(err)) {
                         invalidateSession(err)
                     } else {
-                        message.value = err.message ?: "Unable to load VPN access"
+                        message.value = err.message ?: "Не удалось подготовить VPN-доступ"
                     }
                 }
             )
@@ -535,7 +535,7 @@ class MainViewModel(
             return
         }
 
-        message.value = error.message ?: "Failed to refresh access"
+        message.value = error.message ?: "Не удалось обновить доступ"
     }
 
     private suspend fun handleAuthenticationFailure(error: Throwable) {
@@ -718,7 +718,7 @@ class MainViewModel(
         authError.value = null
         message.value = when (error) {
             is AccessNotReadyException -> ACCESS_NOT_READY_MESSAGE
-            else -> error.message ?: "Could not verify device access"
+            else -> error.message ?: "Не удалось проверить доступ устройства"
         }
     }
 
@@ -759,7 +759,7 @@ class MainViewModel(
             if (!vpnRepository.hasUsageAccess()) {
                 vpnRepository.stopAutomationMonitor()
                 if (!usageAccessPromptShown) {
-                    message.value = "Для Auto ON/OFF нужен Usage Access"
+                    message.value = "Для Auto ON/OFF нужен доступ к активности"
                     usageAccessPromptShown = true
                 }
                 return

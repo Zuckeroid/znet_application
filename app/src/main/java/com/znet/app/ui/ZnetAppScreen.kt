@@ -140,7 +140,7 @@ fun ZnetAppScreen(
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.connect()
         } else {
-            scope.launch { snackbarHostState.showSnackbar("VPN permission is required") }
+            scope.launch { snackbarHostState.showSnackbar("Нужно разрешить VPN-подключение") }
         }
     }
 
@@ -636,7 +636,7 @@ private fun HomeScreen(
                             text = if (state.awayModeAvailable) {
                                 "Банки и сервисы из Auto OFF пойдут через российскую ноду."
                             } else {
-                                "Профиль появится после настройки away-ноды в оркестраторе."
+                                "Профиль появится после настройки московской ноды в оркестраторе."
                             },
                             color = Color(0xFF90A4B5),
                             fontSize = 12.sp
@@ -790,14 +790,14 @@ private fun SettingsScreen(
     val znetVpnActive = state.connectionState == ConnectionState.CONNECTED ||
         state.connectionState == ConnectionState.CONNECTING
     val vpnDiagnosticTitle = when {
-        znetVpnActive -> "Активен Znet VPN"
+        znetVpnActive -> "Активен Znet"
         state.vpnTransportActive -> "Активен другой VPN"
-        else -> "VPN не обнаружен"
+        else -> "Активный VPN не найден"
     }
     val vpnDiagnosticText = when {
         znetVpnActive -> "Туннелем управляет Znet."
-        state.vpnTransportActive -> "Android не раскрывает владельца VPN приложению. Откройте системные настройки, чтобы отключить чужой профиль."
-        else -> "Можно подключать Znet. Системный Legacy VPN без реального туннеля здесь не учитывается."
+        state.vpnTransportActive -> "Android не раскрывает владельца VPN приложению. Откройте системные настройки, чтобы отключить другой профиль."
+        else -> "Можно подключать Znet. Системная запись VPN без активного туннеля здесь не учитывается."
     }
 
     Column(
@@ -835,7 +835,7 @@ private fun SettingsScreen(
                     ),
                     border = BorderStroke(1.2.dp, NeonButtonOutline)
                 ) {
-                    Text("Дать доступ Usage Access")
+                    Text("Разрешить доступ к активности")
                 }
             }
         }
@@ -899,7 +899,7 @@ private fun SettingsScreen(
                     fontSize = 12.sp
                 )
                 Text(
-                    "Пул доменов: API ${state.apiDomainCount}, Web ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
+                    "Пул доменов: доступ ${state.apiDomainCount}, сайт ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
                     color = Color(0xFF92A6B6),
                     fontSize = 12.sp
                 )
@@ -918,7 +918,7 @@ private fun SettingsScreen(
                     fontSize = 12.sp
                 )
                 Text(
-                    "Routing: ${formatRoutingPolicy(state)}",
+                    "Маршрутизация: ${formatRoutingPolicy(state)}",
                     color = Color(0xFF92A6B6),
                     fontSize = 12.sp
                 )
@@ -966,7 +966,7 @@ private fun SettingsScreen(
                 }
                 if (!state.awayModeAvailable) {
                     Text(
-                        "Нужна активная away-нода в оркестраторе.",
+                        "Нужна активная московская нода для режима «За границей».",
                         color = Color(0xFFFFC857),
                         fontSize = 12.sp
                     )
@@ -1013,7 +1013,7 @@ private fun SettingsScreen(
         }
 
         AppPolicySection(
-            title = "Routing",
+            title = "Маршрутизация",
             description = "Какие приложения идут через VPN. Если секция выключена, туннель работает для всех приложений.",
             enabled = state.routingEnabled,
             selectedPackages = state.routingApps,
@@ -1025,7 +1025,7 @@ private fun SettingsScreen(
 
         AppPolicySection(
             title = "Auto ON",
-            description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен Usage Access.",
+            description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен доступ к активности.",
             enabled = state.autoConnectEnabled,
             selectedPackages = state.autoConnectApps,
             recommendedPackages = recommendedAutoOnApps,
@@ -1195,7 +1195,7 @@ private fun AppPolicySection(
 
             if (showRows && installedSelectedCount == 0 && normalizedSelected.isNotEmpty()) {
                 Text(
-                    "Выбранные пакеты сохранятся, но применятся только после установки этих приложений на телефон.",
+                    "Выбранные приложения сохранятся, но применятся только после установки на телефон.",
                     color = Color(0xFF92A6B6),
                     fontSize = 12.sp
                 )
@@ -1353,5 +1353,5 @@ private fun formatDaysRemaining(
 
 private fun formatDomainRevision(revision: String?): String {
     val cleanRevision = revision?.trim()?.takeIf { it.isNotBlank() } ?: return ""
-    return ", rev $cleanRevision"
+    return ", версия $cleanRevision"
 }

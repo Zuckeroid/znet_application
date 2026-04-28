@@ -52,7 +52,7 @@ class OrchestratorClient(
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val normalizedBase = baseUrl.trimEnd('/')
-            require(normalizedBase.isNotBlank()) { "API биллинга не настроен" }
+            require(normalizedBase.isNotBlank()) { "Сервер доступа не настроен" }
             require(token.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val endpoint = "$normalizedBase$TOKEN_AUTH_PATH".toHttpUrl()
@@ -102,7 +102,7 @@ class OrchestratorClient(
     }
 
     private fun parseTokenAccessResponse(rawBody: String): TokenAccessResponse {
-        require(rawBody.isNotBlank()) { "Пустой ответ биллинга" }
+        require(rawBody.isNotBlank()) { "Сервер доступа вернул пустой ответ" }
         val root = json.parseToJsonElement(rawBody).jsonObject
         throwEnvelopeErrorIfPresent(root)
 
@@ -161,7 +161,7 @@ class OrchestratorClient(
         )
 
         if (hasActiveAccess == false) {
-            throw NoActiveAccessException("No active access for this device")
+            throw NoActiveAccessException("Нет активного доступа для этого устройства")
         }
 
         return TokenAccessResponse(
