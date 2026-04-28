@@ -1009,7 +1009,7 @@ private fun SettingsScreen(
                             }
                             Switch(
                                 checked = state.usageAccessGranted,
-                                onCheckedChange = null
+                                onCheckedChange = { onOpenUsageSettings() }
                             )
                         }
                     }
