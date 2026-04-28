@@ -1446,6 +1446,8 @@ private const val POLICY_APP_ICON_PX = 96
 private const val POLICY_LIST_OPEN_DELAY_MS = 160L
 private val ExpiryDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
 private val ExpiryDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy")
+private val ServerDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+private val ServerDateTimeShortFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
 private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
     return when (state.routingPolicy.normalizedMode) {
@@ -1499,7 +1501,11 @@ private fun formatExpiryDate(rawValue: String?): String? {
     }.recoverCatching {
         LocalDateTime.parse(value).format(ExpiryDateTimeFormatter)
     }.recoverCatching {
-        LocalDate.parse(value.substringBefore('T')).format(ExpiryDateFormatter)
+        LocalDateTime.parse(value, ServerDateTimeFormatter).format(ExpiryDateTimeFormatter)
+    }.recoverCatching {
+        LocalDateTime.parse(value, ServerDateTimeShortFormatter).format(ExpiryDateTimeFormatter)
+    }.recoverCatching {
+        LocalDate.parse(value.substringBefore('T').substringBefore(' ')).format(ExpiryDateFormatter)
     }.getOrNull()
 }
 

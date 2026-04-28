@@ -176,10 +176,7 @@ class VpnRepository(
     }
 
     fun stopAutomationMonitor() {
-        val intent = Intent(context, AppAutomationMonitorService::class.java).apply {
-            action = AppAutomationMonitorService.ACTION_STOP
-        }
-        context.startService(intent)
+        context.stopService(Intent(context, AppAutomationMonitorService::class.java))
     }
 
     fun hasUsageAccess(): Boolean {
