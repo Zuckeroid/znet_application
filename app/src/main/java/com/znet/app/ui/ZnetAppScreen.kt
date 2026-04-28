@@ -73,12 +73,12 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.TextUnit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -113,7 +113,7 @@ private val NeonGreenSoft = Color(0x665BFF74)
 private val NeonMuted = Color(0xFF6D7D8A)
 private val NeonButtonOutline = Color(0xFF48FF70)
 private val NeonButtonBg = Color(0xFF0A2413)
-private val ControlBorderWidth = 0.8.dp
+private val ControlBorderWidth = 1.dp
 
 private data class PolicyAppItem(
     val packageName: String,
@@ -607,9 +607,17 @@ private fun HomeScreen(
                 )
                 InfoRow(
                     label = "Осталось",
-                    value = formatDaysRemaining(state.serviceDaysRemaining, state.serviceExpiresAt),
-                    valueFontSize = 13.sp
+                    value = formatDaysRemaining(state.serviceDaysRemaining)
                 )
+                formatExpiryCaption(state.serviceExpiresAt)?.let { expiresAt ->
+                    Text(
+                        text = expiresAt,
+                        color = Color(0xFF90A4B5),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }
@@ -618,8 +626,7 @@ private fun HomeScreen(
 @Composable
 private fun InfoRow(
     label: String,
-    value: String,
-    valueFontSize: TextUnit = TextUnit.Unspecified
+    value: String
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -634,7 +641,6 @@ private fun InfoRow(
         Text(
             text = value,
             color = Color.White,
-            fontSize = valueFontSize,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -1433,8 +1439,8 @@ private fun List<PolicyAppItem>.filterByPolicyQuery(query: String): List<PolicyA
 
 private const val POLICY_APP_ICON_PX = 96
 private const val POLICY_LIST_OPEN_DELAY_MS = 160L
-private val ExpiryDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
-private val ExpiryDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+private val ExpiryDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
+private val ExpiryDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy")
 
 private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
     return when (state.routingPolicy.normalizedMode) {
@@ -1453,23 +1459,18 @@ private fun formatRoutingPolicy(state: MainUiState): String {
     }
 }
 
-private fun formatDaysRemaining(
-    daysRemaining: Int?,
-    expiresAt: String?
-): String {
-    val suffix = when (daysRemaining) {
-        null -> null
+private fun formatDaysRemaining(daysRemaining: Int?): String {
+    return when (daysRemaining) {
+        null -> "неизвестно"
         1 -> "1 день"
         in 2..4 -> "$daysRemaining дня"
         else -> "$daysRemaining дней"
     }
-    val datePart = formatExpiryDate(expiresAt)
-    return when {
-        suffix != null && datePart != null -> "$suffix, до $datePart"
-        suffix != null -> suffix
-        datePart != null -> "до $datePart"
-        else -> "неизвестно"
-    }
+}
+
+private fun formatExpiryCaption(expiresAt: String?): String? {
+    val datePart = formatExpiryDate(expiresAt) ?: return null
+    return "до $datePart"
 }
 
 private fun formatProtocolTransport(
