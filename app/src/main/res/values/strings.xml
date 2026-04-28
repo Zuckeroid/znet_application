@@ -1,7 +1,8 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">znet</string>
-    <string name="vpn_notification_channel">znet VPN</string>
-    <string name="vpn_notification_title">znet VPN active</string>
-    <string name="vpn_notification_content">Traffic is protected</string>
+    <string name="app_name">Znet</string>
+    <string name="vpn_notification_channel">Znet</string>
+    <string name="vpn_notification_title">Znet</string>
+    <string name="vpn_notification_content">Подключение защищено</string>
+    <string name="automation_notification_title">Служба Auto ON/OFF активна</string>
 </resources>

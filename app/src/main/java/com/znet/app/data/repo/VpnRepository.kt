@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Process
-import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
@@ -17,9 +16,11 @@ import com.znet.app.data.remote.DeviceRegistrationData
 import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
+import com.znet.app.data.remote.TokenAuthRequestException
 import com.znet.app.data.remote.InvalidTokenException
 import com.znet.app.vpn.AppAutomationMonitorService
 import com.znet.app.vpn.ZnetVpnService
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -35,41 +36,37 @@ class VpnRepository(
     suspend fun authenticateWithToken(token: String): Result<ResolvedNodeAccess> {
         return runCatching {
             val cleanToken = token.trim()
-            val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
 
             require(cleanToken.isNotBlank()) { INVALID_TOKEN_MESSAGE }
             require(cleanToken.length == REQUIRED_TOKEN_LENGTH) { INVALID_TOKEN_MESSAGE }
-            require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val deviceData = buildDeviceRegistrationData()
-            val access = orchestratorClient.resolveTokenAccess(
-                baseUrl = authBaseUrl,
+            val resolved = resolveTokenAccessWithDomainPool(
                 token = cleanToken,
                 deviceData = deviceData
-            ).getOrThrow()
+            )
+            rememberSuccessfulDomain(resolved)
 
-            finalizeTokenExchange(access)
+            finalizeTokenExchange(resolved.access)
         }
     }
 
     suspend fun refreshAccessBundle(): Result<ResolvedNodeAccess> {
         return runCatching {
             val prefs = preferencesRepository.preferences.first()
-            val authBaseUrl = BuildConfig.AUTH_API_URL.trimEnd('/')
             val sessionToken = prefs.deviceToken.trim()
 
             require(sessionToken.isNotBlank()) { INVALID_TOKEN_MESSAGE }
-            require(authBaseUrl.isNotBlank()) { INVALID_TOKEN_MESSAGE }
 
             val deviceData = buildDeviceRegistrationData()
-            val access = orchestratorClient.resolveTokenAccess(
-                baseUrl = authBaseUrl,
+            val resolved = resolveTokenAccessWithDomainPool(
                 token = sessionToken,
                 deviceData = deviceData
-            ).getOrThrow()
+            )
+            rememberSuccessfulDomain(resolved)
 
             finalizeSessionRefresh(
-                access = access,
+                access = resolved.access,
                 currentDeviceToken = sessionToken
             )
         }
@@ -228,6 +225,56 @@ class VpnRepository(
         )
     }
 
+    private suspend fun resolveTokenAccessWithDomainPool(
+        token: String,
+        deviceData: DeviceRegistrationData
+    ): DomainResolvedAccess {
+        val prefs = preferencesRepository.preferences.first()
+        val candidates = preferencesRepository.apiBaseUrlCandidates(prefs)
+        require(candidates.isNotEmpty()) { INVALID_TOKEN_MESSAGE }
+
+        var lastRecoverableError: Throwable? = null
+        for (baseUrl in candidates) {
+            val result = orchestratorClient.resolveTokenAccess(
+                baseUrl = baseUrl,
+                token = token,
+                deviceData = deviceData
+            )
+            val access = result.getOrNull()
+            if (access != null) {
+                return DomainResolvedAccess(access = access, apiBaseUrl = baseUrl)
+            }
+
+            val error = result.exceptionOrNull() ?: continue
+            if (!shouldTryNextDomain(error)) {
+                throw error
+            }
+            lastRecoverableError = error
+        }
+
+        throw lastRecoverableError ?: InvalidTokenException(INVALID_TOKEN_MESSAGE)
+    }
+
+    private suspend fun rememberSuccessfulDomain(resolved: DomainResolvedAccess) {
+        preferencesRepository.setLastWorkingApiBaseUrl(resolved.apiBaseUrl)
+        preferencesRepository.rememberDomainBundle(resolved.access.domainBundle)
+    }
+
+    private fun shouldTryNextDomain(error: Throwable): Boolean {
+        return when (error) {
+            is InvalidTokenException,
+            is NoActiveAccessException,
+            is AccessNotReadyException -> false
+            is TokenAuthRequestException -> {
+                val statusCode = error.statusCode
+                statusCode == null || statusCode == 408 || statusCode == 429 || statusCode >= 500
+            }
+            is IOException -> true
+            is IllegalArgumentException -> true
+            else -> true
+        }
+    }
+
     private suspend fun finalizeTokenExchange(
         access: TokenAccessResponse
     ): ResolvedNodeAccess {
@@ -319,3 +366,8 @@ class VpnRepository(
         const val ACCESS_NOT_READY_MESSAGE = "Доступ пока не готов"
     }
 }
+
+private data class DomainResolvedAccess(
+    val access: TokenAccessResponse,
+    val apiBaseUrl: String
+)

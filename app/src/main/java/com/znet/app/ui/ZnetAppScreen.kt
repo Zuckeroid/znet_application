@@ -6,6 +6,7 @@ import android.net.VpnService
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationManagerCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -80,7 +81,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.znet.app.BuildConfig
 import com.znet.app.data.model.ConnectionState
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
@@ -300,6 +300,12 @@ fun ZnetAppScreen(
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         })
                     },
+                    onOpenNotificationSettings = {
+                        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    },
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -344,9 +350,10 @@ private fun TokenAuthScreen(
     modifier: Modifier = Modifier
 ) {
     val uriHandler = LocalUriHandler.current
+    val signUpUrl = "${state.webBaseUrl.trimEnd('/')}/signup"
     val signUpText = buildAnnotatedString {
         append("Нет аккаунта? зарегистрироваться ")
-        pushStringAnnotation(tag = "signup", annotation = SIGN_UP_URL)
+        pushStringAnnotation(tag = "signup", annotation = signUpUrl)
         withStyle(
             SpanStyle(
                 color = NeonGreen,
@@ -772,8 +779,11 @@ private fun SettingsScreen(
     onResetZnetVpn: () -> Unit,
     onOpenVpnSettings: () -> Unit,
     onOpenUsageSettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     val recommendedRoutingApps = recommendedRoutingPackages(state)
     val recommendedAutoOnApps = state.automationPolicy.autoConnectApps
     val recommendedAutoOffApps = state.automationPolicy.autoDisconnectApps
@@ -826,6 +836,34 @@ private fun SettingsScreen(
                     border = BorderStroke(1.2.dp, NeonButtonOutline)
                 ) {
                     Text("Дать доступ Usage Access")
+                }
+            }
+        }
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Уведомления", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (notificationsEnabled) {
+                        "Znet может показывать активный VPN и автоматику в шторке."
+                    } else {
+                        "Уведомления выключены, поэтому сервис работает без карточки в шторке."
+                    },
+                    color = if (notificationsEnabled) Color(0xFF92A6B6) else Color(0xFFFFC857),
+                    fontSize = 12.sp
+                )
+                Button(
+                    onClick = onOpenNotificationSettings,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonButtonBg,
+                        contentColor = NeonGreen
+                    ),
+                    border = BorderStroke(1.2.dp, NeonButtonOutline)
+                ) {
+                    Text("Настройки уведомлений")
                 }
             }
         }
@@ -1288,5 +1326,3 @@ private fun formatDaysRemaining(
         else -> "неизвестно"
     }
 }
-
-private val SIGN_UP_URL = BuildConfig.AUTH_API_URL.trimEnd('/') + "/signup"

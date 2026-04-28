@@ -77,7 +77,13 @@ class ZnetVpnService : VpnService() {
             }
 
             ACTION_DISCONNECT -> {
-                startForeground(NOTIFICATION_ID, buildNotification("Disconnecting..."))
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(
+                        title = getString(R.string.app_name),
+                        content = "Отключаем VPN..."
+                    )
+                )
                 serviceScope.launch {
                     disconnect(ConnectionState.DISCONNECTED, null)
                     stopSelf()
@@ -113,7 +119,13 @@ class ZnetVpnService : VpnService() {
                     errorMessage = null
                 )
             }
-            startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(
+                    title = getString(R.string.app_name),
+                    content = "Подключаем VPN..."
+                )
+            )
 
             this.allowedApps = allowedApps
             this.disallowedApps = disallowedApps
@@ -137,7 +149,7 @@ class ZnetVpnService : VpnService() {
                     errorMessage = null
                 )
             }
-            updateNotification("Connected: ${node.country}, ${node.city}")
+            updateNotification("${node.notificationLabel()} ✅")
         }.onFailure { error ->
             Log.e(TAG, "connect failed", error)
             VpnStatusBus.update {
@@ -279,7 +291,10 @@ class ZnetVpnService : VpnService() {
         }
     }
 
-    private fun buildNotification(content: String): Notification {
+    private fun buildNotification(
+        title: String,
+        content: String? = null
+    ): Notification {
         createNotificationChannel()
 
         val pendingIntent = PendingIntent.getActivity(
@@ -289,17 +304,24 @@ class ZnetVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.vpn_notification_title))
-            .setContentText(content)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setSmallIcon(R.drawable.ic_stat_znet)
             .setContentIntent(pendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .build()
+
+        if (!content.isNullOrBlank()) {
+            builder.setContentText(content)
+        }
+
+        return builder.build()
     }
 
-    private fun updateNotification(content: String) {
-        val notification = buildNotification(content)
+    private fun updateNotification(title: String) {
+        val notification = buildNotification(title)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification)
     }
@@ -313,6 +335,20 @@ class ZnetVpnService : VpnService() {
             NotificationManager.IMPORTANCE_LOW
         )
         manager.createNotificationChannel(channel)
+    }
+
+    private fun ServerNode.notificationLabel(): String {
+        val safeName = name.trim()
+            .takeIf { it.isNotBlank() && !it.isIpAddressLike() }
+            ?: id.trim().takeIf { it.isNotBlank() && !it.isIpAddressLike() }
+            ?: "Znet node"
+        val flag = flagEmoji.trim().takeIf { it.isNotBlank() }
+        return listOfNotNull(flag, safeName).joinToString(" ")
+    }
+
+    private fun String.isIpAddressLike(): Boolean {
+        val value = trim()
+        return value.matches(Regex("""\d{1,3}(\.\d{1,3}){3}""")) || value.contains(":")
     }
 
     companion object {

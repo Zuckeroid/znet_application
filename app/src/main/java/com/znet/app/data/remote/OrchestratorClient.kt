@@ -124,6 +124,10 @@ class OrchestratorClient(
             ?: payload.objectOrNull("profiles", "connectionProfiles")
             ?: result?.objectOrNull("profiles", "connectionProfiles")
             ?: root.objectOrNull("profiles", "connectionProfiles")
+        val domainBundle = connection?.objectOrNull("domain_bundle", "domainBundle", "domains")
+            ?: payload.objectOrNull("domain_bundle", "domainBundle", "domains")
+            ?: result?.objectOrNull("domain_bundle", "domainBundle", "domains")
+            ?: root.objectOrNull("domain_bundle", "domainBundle", "domains")
 
         val device = app?.objectOrNull("device")
         val deviceToken = app?.stringOrNull("token", "device_token", "deviceToken")
@@ -188,6 +192,7 @@ class OrchestratorClient(
             routingPolicy = parseRoutingPolicy(routingPolicy),
             automationPolicy = parseAutomationPolicy(automationPolicy),
             profiles = parseConnectionProfiles(connectionProfiles),
+            domainBundle = parseDomainBundle(domainBundle),
             serviceTitle = service?.stringOrNull("title", "name"),
             serviceExpiresAt = service?.stringOrNull("expires_at", "expiresAt"),
             serviceDaysRemaining = service?.intOrNull("days_remaining", "daysRemaining")
@@ -337,6 +342,46 @@ class OrchestratorClient(
         }.toMap()
     }
 
+    private fun parseDomainBundle(bundle: JsonObject?): DomainBundle {
+        if (bundle == null) {
+            return DomainBundle()
+        }
+
+        return DomainBundle(
+            version = bundle.intOrNull("version") ?: 1,
+            revision = bundle.stringOrNull("revision", "config_revision", "configRevision"),
+            generatedAt = bundle.stringOrNull("generated_at", "generatedAt"),
+            api = parseDomainEndpoints(
+                bundle.arrayOrNull("api", "api_domains", "apiDomains")
+            ),
+            web = parseDomainEndpoints(
+                bundle.arrayOrNull("web", "web_domains", "webDomains")
+            )
+        )
+    }
+
+    private fun parseDomainEndpoints(endpoints: JsonArray?): List<DomainEndpoint> {
+        if (endpoints == null) {
+            return emptyList()
+        }
+
+        return endpoints.mapNotNull { element ->
+            val endpoint = element as? JsonObject ?: return@mapNotNull null
+            val url = endpoint.stringOrNull("url", "base_url", "baseUrl")
+                ?.trimEnd('/')
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            DomainEndpoint(
+                url = url,
+                role = endpoint.stringOrNull("role") ?: "backup",
+                priority = endpoint.intOrNull("priority") ?: 100,
+                enabled = endpoint.booleanOrNull("enabled", "is_active", "isActive") ?: true,
+                label = endpoint.stringOrNull("label", "name")
+            )
+        }
+    }
+
     private fun JsonObject.stringSetOrNull(vararg keys: String): Set<String> {
         keys.forEach { key ->
             val element = this[key] ?: return@forEach
@@ -364,6 +409,12 @@ class OrchestratorClient(
     private fun JsonObject.objectOrNull(vararg keys: String): JsonObject? {
         keys.forEach { key ->
             this[key].asObjectOrNull()?.let { return it }
+        }
+        return null
+    }
+    private fun JsonObject.arrayOrNull(vararg keys: String): JsonArray? {
+        keys.forEach { key ->
+            (this[key] as? JsonArray)?.let { return it }
         }
         return null
     }
@@ -406,9 +457,28 @@ data class TokenAccessResponse(
     val routingPolicy: AppRoutingPolicy = AppRoutingPolicy(),
     val automationPolicy: AppAutomationPolicy = AppAutomationPolicy(),
     val profiles: Map<String, AccessConnectionProfile> = emptyMap(),
+    val domainBundle: DomainBundle = DomainBundle(),
     val serviceTitle: String? = null,
     val serviceExpiresAt: String? = null,
     val serviceDaysRemaining: Int? = null
+)
+
+@Serializable
+data class DomainBundle(
+    val version: Int = 1,
+    val revision: String? = null,
+    val generatedAt: String? = null,
+    val api: List<DomainEndpoint> = emptyList(),
+    val web: List<DomainEndpoint> = emptyList()
+)
+
+@Serializable
+data class DomainEndpoint(
+    val url: String,
+    val role: String = "backup",
+    val priority: Int = 100,
+    val enabled: Boolean = true,
+    val label: String? = null
 )
 
 data class AccessConnectionProfile(

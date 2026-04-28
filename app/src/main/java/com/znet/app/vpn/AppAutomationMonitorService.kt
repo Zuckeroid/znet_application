@@ -60,9 +60,9 @@ class AppAutomationMonitorService : Service() {
     }
 
     private fun startMonitor() {
+        startForeground(NOTIFICATION_ID, buildNotification())
         if (monitorStarted) return
         monitorStarted = true
-        startForeground(NOTIFICATION_ID, buildNotification())
         Log.i(TAG, "Automation monitor started")
         appendDebug("monitor started")
 
@@ -301,10 +301,12 @@ class AppAutomationMonitorService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText("Автоматическое подключение активно")
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(R.drawable.ic_stat_znet)
+            .setContentTitle(getString(R.string.automation_notification_title))
             .setContentIntent(pendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .build()
     }

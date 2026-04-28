@@ -13,10 +13,15 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.znet.app.BuildConfig
 import com.znet.app.data.remote.AppAutomationPolicy
 import com.znet.app.data.remote.AppRoutingPolicy
+import com.znet.app.data.remote.DomainBundle
+import com.znet.app.data.remote.DomainEndpoint
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.IOException
 
 private val Context.userPrefsStore: DataStore<Preferences> by preferencesDataStore(name = "user_prefs")
@@ -33,12 +38,17 @@ data class UserPreferences(
     val autoDisconnectEnabled: Boolean,
     val awayModeEnabled: Boolean,
     val policyDefaultsApplied: Boolean,
-    val adaptiveEnabled: Boolean
+    val adaptiveEnabled: Boolean,
+    val domainBundle: DomainBundle,
+    val lastWorkingApiBaseUrl: String,
+    val webBaseUrl: String
 )
 
 class UserPreferencesRepository(
     private val context: Context
 ) {
+    private val json = Json { ignoreUnknownKeys = true }
+
     private object Keys {
         // Legacy keys are kept only to migrate or wipe stale auth state from older app builds.
         val orchestratorBaseUrl = stringPreferencesKey("orchestrator_base_url")
@@ -60,6 +70,8 @@ class UserPreferencesRepository(
         val awayModeEnabled = booleanPreferencesKey("away_mode_enabled")
         val policyDefaultsApplied = booleanPreferencesKey("policy_defaults_applied")
         val adaptiveEnabled = booleanPreferencesKey("adaptive_enabled")
+        val domainBundleJson = stringPreferencesKey("domain_bundle_json")
+        val lastWorkingApiBaseUrl = stringPreferencesKey("last_working_api_base_url")
     }
 
     val preferences: Flow<UserPreferences> = context.userPrefsStore.data
@@ -71,6 +83,10 @@ class UserPreferencesRepository(
             }
         }
         .map { prefs ->
+            val domainBundle = parseStoredDomainBundle(prefs[Keys.domainBundleJson])
+            val lastWorkingApiBaseUrl = prefs[Keys.lastWorkingApiBaseUrl]
+                ?.normalizeBaseUrl()
+                .orEmpty()
             UserPreferences(
                 deviceToken = prefs[Keys.deviceToken] ?: "",
                 deviceId = prefs[Keys.deviceId] ?: "",
@@ -83,7 +99,10 @@ class UserPreferencesRepository(
                 autoDisconnectEnabled = prefs[Keys.autoDisconnectEnabled] ?: true,
                 awayModeEnabled = prefs[Keys.awayModeEnabled] ?: false,
                 policyDefaultsApplied = prefs[Keys.policyDefaultsApplied] ?: false,
-                adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true
+                adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true,
+                domainBundle = domainBundle,
+                lastWorkingApiBaseUrl = lastWorkingApiBaseUrl,
+                webBaseUrl = resolveWebBaseUrl(domainBundle, lastWorkingApiBaseUrl)
             )
         }
 
@@ -96,7 +115,7 @@ class UserPreferencesRepository(
             }
 
             // Drop old session/link leftovers once the active device token has been restored.
-            prefs[Keys.orchestratorBaseUrl] = BuildConfig.AUTH_API_URL.trimEnd('/')
+            prefs[Keys.orchestratorBaseUrl] = bootstrapApiBaseUrls().firstOrNull().orEmpty()
             prefs[Keys.authToken] = ""
             prefs[Keys.manualVlessLink] = ""
             prefs[Keys.hasActiveAccess] = ""
@@ -122,7 +141,7 @@ class UserPreferencesRepository(
     suspend fun setDeviceSession(deviceToken: String) {
         context.userPrefsStore.edit { prefs ->
             prefs[Keys.deviceToken] = deviceToken.trim()
-            prefs[Keys.orchestratorBaseUrl] = BuildConfig.AUTH_API_URL.trimEnd('/')
+            prefs[Keys.orchestratorBaseUrl] = bootstrapApiBaseUrls().firstOrNull().orEmpty()
             prefs[Keys.authToken] = ""
             prefs[Keys.manualVlessLink] = ""
             prefs[Keys.hasActiveAccess] = ""
@@ -183,6 +202,25 @@ class UserPreferencesRepository(
     suspend fun setAdaptiveEnabled(enabled: Boolean) {
         context.userPrefsStore.edit { prefs ->
             prefs[Keys.adaptiveEnabled] = enabled
+        }
+    }
+
+    suspend fun rememberDomainBundle(domainBundle: DomainBundle) {
+        if (domainBundle.api.none { it.enabled && it.url.isNotBlank() } &&
+            domainBundle.web.none { it.enabled && it.url.isNotBlank() }
+        ) {
+            return
+        }
+
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.domainBundleJson] = json.encodeToString(domainBundle)
+        }
+    }
+
+    suspend fun setLastWorkingApiBaseUrl(baseUrl: String) {
+        val normalized = baseUrl.normalizeBaseUrl() ?: return
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.lastWorkingApiBaseUrl] = normalized
         }
     }
 
@@ -249,6 +287,84 @@ class UserPreferencesRepository(
         prefs[Keys.policyDefaultsApplied] = true
     }
 
+    fun apiBaseUrlCandidates(preferences: UserPreferences): List<String> {
+        return (
+            listOf(preferences.lastWorkingApiBaseUrl) +
+                activeDomainUrls(preferences.domainBundle.api) +
+                bootstrapApiBaseUrls()
+            )
+            .mapNotNull { it.normalizeBaseUrl() }
+            .distinct()
+    }
+
+    fun webBaseUrl(preferences: UserPreferences): String {
+        return resolveWebBaseUrl(
+            preferences.domainBundle,
+            preferences.lastWorkingApiBaseUrl
+        )
+    }
+
+    private fun resolveWebBaseUrl(
+        domainBundle: DomainBundle,
+        lastWorkingApiBaseUrl: String
+    ): String {
+        return (
+            activeDomainUrls(domainBundle.web) +
+                activeDomainUrls(domainBundle.api) +
+                listOf(lastWorkingApiBaseUrl) +
+                bootstrapApiBaseUrls()
+            )
+            .mapNotNull { it.normalizeBaseUrl() }
+            .firstOrNull()
+            ?: DEFAULT_BOOTSTRAP_URL
+    }
+
+    private fun parseStoredDomainBundle(raw: String?): DomainBundle {
+        val normalized = raw?.trim().orEmpty()
+        if (normalized.isBlank()) {
+            return DomainBundle()
+        }
+
+        return runCatching {
+            json.decodeFromString<DomainBundle>(normalized)
+        }.getOrDefault(DomainBundle())
+    }
+
+    private fun activeDomainUrls(endpoints: List<DomainEndpoint>): List<String> {
+        return endpoints
+            .asSequence()
+            .filter { endpoint -> endpoint.enabled }
+            .sortedWith(
+                compareBy<DomainEndpoint> { endpoint ->
+                    if (endpoint.role.equals("primary", ignoreCase = true)) 0 else 1
+                }.thenBy { endpoint -> endpoint.priority }
+            )
+            .map { endpoint -> endpoint.url }
+            .toList()
+    }
+
+    private fun bootstrapApiBaseUrls(): List<String> {
+        return BuildConfig.AUTH_API_URLS
+            .split(',', '\n', '\r', ';')
+            .mapNotNull { item -> item.normalizeBaseUrl() }
+            .distinct()
+            .ifEmpty {
+                listOfNotNull(BuildConfig.AUTH_API_URL.normalizeBaseUrl())
+            }
+            .ifEmpty {
+                listOf(DEFAULT_BOOTSTRAP_URL)
+            }
+    }
+
+    private fun String?.normalizeBaseUrl(): String? {
+        val normalized = this?.trim()?.trimEnd('/') ?: return null
+        if (normalized.isBlank()) {
+            return null
+        }
+
+        return normalized
+    }
+
     private fun Iterable<String>.normalizedPackages(): Set<String> {
         return map { item -> item.trim() }
             .filter { item -> item.isNotBlank() }
@@ -257,5 +373,6 @@ class UserPreferencesRepository(
 
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
+        const val DEFAULT_BOOTSTRAP_URL = "https://my-storage.org"
     }
 }

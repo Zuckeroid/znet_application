@@ -13,6 +13,12 @@ android {
         .orElse("https://my-storage.org")
         .get()
         .replace("\"", "\\\"")
+    val authApiUrls = providers
+        .environmentVariable("ZNET_AUTH_API_URLS")
+        .orElse(providers.gradleProperty("ZNET_AUTH_API_URLS"))
+        .orElse(authApiUrl)
+        .get()
+        .replace("\"", "\\\"")
 
     defaultConfig {
         applicationId = "com.znet.app"
@@ -21,6 +27,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "AUTH_API_URL", "\"$authApiUrl\"")
+        buildConfigField("String", "AUTH_API_URLS", "\"$authApiUrls\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
