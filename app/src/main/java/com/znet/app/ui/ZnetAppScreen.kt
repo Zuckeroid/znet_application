@@ -982,15 +982,35 @@ private fun SettingsScreen(
                             color = Color(0xFF92A6B6),
                             fontSize = 12.sp
                         )
-                        Button(
-                            onClick = onOpenUsageSettings,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NeonButtonBg,
-                                contentColor = NeonGreen
-                            ),
-                            border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onOpenUsageSettings)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Разрешить доступ к активности")
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Доступ к активности",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    if (state.usageAccessGranted) {
+                                        "Включено"
+                                    } else {
+                                        "Выключено. Нажмите, чтобы открыть настройки Android."
+                                    },
+                                    color = if (state.usageAccessGranted) NeonGreen else Color(0xFFFFC857),
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Switch(
+                                checked = state.usageAccessGranted,
+                                onCheckedChange = null
+                            )
                         }
                     }
                 }

@@ -70,6 +70,7 @@ data class MainUiState(
     val authInProgress: Boolean = false,
     val pendingAutoConnect: Boolean = false,
     val vpnTransportActive: Boolean = false,
+    val usageAccessGranted: Boolean = false,
     val isBusy: Boolean = false,
     val message: String? = null
 )
@@ -93,6 +94,7 @@ class MainViewModel(
     private val authInProgress = MutableStateFlow(false)
     private val pendingAutoConnect = MutableStateFlow(false)
     private val vpnTransportActive = MutableStateFlow(false)
+    private val usageAccessGranted = MutableStateFlow(false)
     private val resolvedAccess = MutableStateFlow<ResolvedNodeAccess?>(null)
     private val sessionValidationInProgress = MutableStateFlow(false)
     private var usageAccessPromptShown = false
@@ -113,7 +115,8 @@ class MainViewModel(
         authInProgress,
         pendingAutoConnect,
         resolvedAccess,
-        vpnTransportActive
+        vpnTransportActive,
+        usageAccessGranted
     ) { values ->
         val prefs = values[0] as UserPreferences
         val status = values[1] as VpnStatus
@@ -128,6 +131,7 @@ class MainViewModel(
         val shouldAutoConnect = values[10] as Boolean
         val access = values[11] as ResolvedNodeAccess?
         val hasVpnTransport = values[12] as Boolean
+        val hasUsageAccess = values[13] as Boolean
 
         val activeProfile = access?.let { activeProfile(it, prefs) }
         val selectedNode = activeProfile?.node
@@ -168,6 +172,7 @@ class MainViewModel(
             authInProgress = authorizing,
             pendingAutoConnect = shouldAutoConnect,
             vpnTransportActive = hasVpnTransport,
+            usageAccessGranted = hasUsageAccess,
             isBusy = isBusyValue,
             message = status.errorMessage
         )
@@ -487,6 +492,7 @@ class MainViewModel(
 
     fun refreshVpnEnvironment() {
         vpnTransportActive.value = detectVpnTransport()
+        usageAccessGranted.value = vpnRepository.hasUsageAccess()
     }
 
     fun clearMessage() {
@@ -759,7 +765,9 @@ class MainViewModel(
                 (autoConnectActive || autoDisconnectActive)
 
         if (shouldRun) {
-            if (!vpnRepository.hasUsageAccess()) {
+            val hasUsageAccess = vpnRepository.hasUsageAccess()
+            usageAccessGranted.value = hasUsageAccess
+            if (!hasUsageAccess) {
                 vpnRepository.stopAutomationMonitor()
                 if (!usageAccessPromptShown) {
                     message.value = "Для Auto ON/OFF нужен доступ к активности"
