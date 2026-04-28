@@ -8,9 +8,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.znet.app.ui.ZnetAppScreen
 import com.znet.app.ui.theme.ZnetTheme
@@ -30,14 +32,16 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
 
         setContent {
-            val app = application as ZnetApp
-            val viewModel: MainViewModel = viewModel(
-                factory = MainViewModel.Factory(application, app.container)
-            )
-            val state by viewModel.uiState.collectAsStateWithLifecycle()
+            CompositionLocalProvider(LocalLifecycleOwner provides this@MainActivity) {
+                val app = application as ZnetApp
+                val viewModel: MainViewModel = viewModel(
+                    factory = MainViewModel.Factory(application, app.container)
+                )
+                val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-            ZnetTheme {
-                ZnetAppScreen(state = state, viewModel = viewModel)
+                ZnetTheme {
+                    ZnetAppScreen(state = state, viewModel = viewModel)
+                }
             }
         }
     }
