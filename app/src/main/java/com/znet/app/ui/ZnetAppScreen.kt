@@ -567,12 +567,20 @@ private fun HomeScreen(
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
+                val serverLabel = if (node == null) {
+                    buildAnnotatedString {
+                        append("Сервер не выбран")
+                    }
+                } else {
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = Color(0xFF8EA2B2))) {
+                            append("Сервер:")
+                        }
+                        append(" ${node.flagEmoji} ${node.name}")
+                    }
+                }
                 Text(
-                    text = if (node == null) {
-                        "Сервер не выбран"
-                    } else {
-                        "Сервер: ${node.flagEmoji} ${node.name}"
-                    },
+                    text = serverLabel,
                     color = Color(0xFFB6C4CE)
                 )
                 if (state.latencyMs >= 0) {
@@ -624,7 +632,11 @@ private fun InfoRow(
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = if (caption.isNullOrBlank()) {
+            Alignment.CenterVertically
+        } else {
+            Alignment.Top
+        }
     ) {
         Text(
             text = label,
@@ -730,7 +742,6 @@ private fun NodeCard(
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(node.name, color = Color.White, fontWeight = FontWeight.Medium)
-                Text("${node.flagEmoji} ${node.country}", color = Color(0xFF90A4B5))
             }
             if (selected) {
                 Text("Выбран", color = Color(0xFF4BFF68), fontWeight = FontWeight.Bold)
