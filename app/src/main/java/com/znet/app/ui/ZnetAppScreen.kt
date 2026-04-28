@@ -88,6 +88,7 @@ import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.viewmodel.MainUiState
 import com.znet.app.viewmodel.MainViewModel
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private enum class BottomTab {
@@ -1109,6 +1110,7 @@ private fun AppPolicySection(
     onTogglePackage: (String) -> Unit
 ) {
     var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    var opening by rememberSaveable("${title}_opening") { mutableStateOf(false) }
     var query by rememberSaveable("${title}_query") { mutableStateOf("") }
     val normalizedSelected = remember(selectedPackages) { selectedPackages.normalizedPackageSet() }
     val normalizedRecommended = remember(recommendedPackages) { recommendedPackages.normalizedPackageSet() }
@@ -1156,10 +1158,23 @@ private fun AppPolicySection(
     val missingSelectedCount = missingItems.count { item -> normalizedSelected.contains(item.packageName) }
     val installedSelectedCount = installedItems.count { item -> normalizedSelected.contains(item.packageName) }
 
+    LaunchedEffect(opening) {
+        if (opening) {
+            delay(POLICY_LIST_OPEN_DELAY_MS)
+            expanded = true
+            opening = false
+        }
+    }
+
     fun toggleExpanded() {
-        expanded = !expanded
-        if (!expanded) {
+        if (expanded) {
+            expanded = false
             query = ""
+            return
+        }
+
+        if (!opening) {
+            opening = true
         }
     }
 
@@ -1234,13 +1249,27 @@ private fun AppPolicySection(
                 ),
                 border = BorderStroke(1.2.dp, NeonButtonOutline)
             ) {
-                Text(
-                    if (expanded) {
-                        "Свернуть список"
-                    } else {
-                        "Открыть список (${filteredInstalledItems.size})"
+                if (opening) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            color = NeonGreen,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text("Открываем список")
                     }
-                )
+                } else {
+                    Text(
+                        if (expanded) {
+                            "Свернуть список"
+                        } else {
+                            "Открыть список (${filteredInstalledItems.size})"
+                        }
+                    )
+                }
             }
 
             if (showRows && installedSelectedCount == 0 && normalizedSelected.isNotEmpty()) {
@@ -1364,6 +1393,7 @@ private fun List<PolicyAppItem>.filterByPolicyQuery(query: String): List<PolicyA
 }
 
 private const val POLICY_APP_ICON_PX = 96
+private const val POLICY_LIST_OPEN_DELAY_MS = 160L
 
 private fun recommendedRoutingPackages(state: MainUiState): Set<String> {
     return when (state.routingPolicy.normalizedMode) {
