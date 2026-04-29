@@ -41,7 +41,9 @@ data class UserPreferences(
     val adaptiveEnabled: Boolean,
     val domainBundle: DomainBundle,
     val lastWorkingApiBaseUrl: String,
-    val webBaseUrl: String
+    val webBaseUrl: String,
+    val themeMode: String,
+    val languageCode: String
 )
 
 class UserPreferencesRepository(
@@ -72,6 +74,8 @@ class UserPreferencesRepository(
         val adaptiveEnabled = booleanPreferencesKey("adaptive_enabled")
         val domainBundleJson = stringPreferencesKey("domain_bundle_json")
         val lastWorkingApiBaseUrl = stringPreferencesKey("last_working_api_base_url")
+        val themeMode = stringPreferencesKey("theme_mode")
+        val languageCode = stringPreferencesKey("language_code")
     }
 
     val preferences: Flow<UserPreferences> = context.userPrefsStore.data
@@ -102,7 +106,9 @@ class UserPreferencesRepository(
                 adaptiveEnabled = prefs[Keys.adaptiveEnabled] ?: true,
                 domainBundle = domainBundle,
                 lastWorkingApiBaseUrl = lastWorkingApiBaseUrl,
-                webBaseUrl = resolveWebBaseUrl(domainBundle, lastWorkingApiBaseUrl)
+                webBaseUrl = resolveWebBaseUrl(domainBundle, lastWorkingApiBaseUrl),
+                themeMode = prefs[Keys.themeMode]?.takeIf { it in THEME_MODES } ?: THEME_SYSTEM,
+                languageCode = prefs[Keys.languageCode]?.takeIf { it in LANGUAGE_CODES } ?: LANGUAGE_RU
             )
         }
 
@@ -202,6 +208,20 @@ class UserPreferencesRepository(
     suspend fun setAdaptiveEnabled(enabled: Boolean) {
         context.userPrefsStore.edit { prefs ->
             prefs[Keys.adaptiveEnabled] = enabled
+        }
+    }
+
+    suspend fun setThemeMode(themeMode: String) {
+        val normalized = themeMode.takeIf { it in THEME_MODES } ?: THEME_SYSTEM
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.themeMode] = normalized
+        }
+    }
+
+    suspend fun setLanguageCode(languageCode: String) {
+        val normalized = languageCode.takeIf { it in LANGUAGE_CODES } ?: LANGUAGE_RU
+        context.userPrefsStore.edit { prefs ->
+            prefs[Keys.languageCode] = normalized
         }
     }
 
@@ -374,5 +394,12 @@ class UserPreferencesRepository(
     private companion object {
         const val REQUIRED_TOKEN_LENGTH = 32
         const val DEFAULT_BOOTSTRAP_URL = "https://my-storage.org"
+        const val THEME_SYSTEM = "system"
+        const val THEME_DARK = "dark"
+        const val THEME_LIGHT = "light"
+        const val LANGUAGE_RU = "ru"
+        const val LANGUAGE_EN = "en"
+        val THEME_MODES = setOf(THEME_SYSTEM, THEME_DARK, THEME_LIGHT)
+        val LANGUAGE_CODES = setOf(LANGUAGE_RU, LANGUAGE_EN)
     }
 }

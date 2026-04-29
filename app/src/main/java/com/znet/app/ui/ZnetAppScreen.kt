@@ -1,16 +1,20 @@
 ﻿package com.znet.app.ui
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.NotificationManagerCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -52,6 +57,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -89,7 +95,6 @@ import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.viewmodel.MainUiState
 import com.znet.app.viewmodel.MainViewModel
 import androidx.core.graphics.drawable.toBitmap
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -105,8 +110,29 @@ private enum class BottomTab {
 private enum class SettingsSection(val title: String) {
     Connection("Доступ"),
     Apps("Приложения"),
+    Permissions("Разрешения"),
     Diagnostics("Диагностика")
 }
+
+private enum class PolicyListKind(val title: String, val description: String) {
+    Routing(
+        title = "Маршрутизация",
+        description = "Какие установленные приложения идут через VPN."
+    ),
+    AutoOn(
+        title = "Auto ON",
+        description = "Какие установленные приложения могут автоматически поднимать туннель."
+    ),
+    AutoOff(
+        title = "Auto OFF",
+        description = "Какие установленные приложения временно выключают VPN."
+    )
+}
+
+private data class ChoiceChipItem(
+    val value: String,
+    val label: String
+)
 
 private val NeonGreen = Color(0xFF5BFF74)
 private val NeonGreenSoft = Color(0x665BFF74)
@@ -114,6 +140,55 @@ private val NeonMuted = Color(0xFF6D7D8A)
 private val NeonButtonOutline = Color(0xFF48FF70)
 private val NeonButtonBg = Color(0xFF0A2413)
 private val ControlBorderWidth = 1.dp
+
+@Composable
+private fun znetScreenBackgroundColor(): Color = MaterialTheme.colorScheme.background
+
+@Composable
+private fun znetCardColors() = CardDefaults.cardColors(
+    containerColor = MaterialTheme.colorScheme.surface
+)
+
+@Composable
+private fun znetPrimaryTextColor(): Color = MaterialTheme.colorScheme.onSurface
+
+@Composable
+private fun znetSecondaryTextColor(): Color = MaterialTheme.colorScheme.onSurfaceVariant
+
+@Composable
+private fun znetMutedSurfaceColor(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f)
+
+@Composable
+private fun znetMutedBorderColor(): Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)
+
+@Composable
+private fun ZnetSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = NeonGreen,
+            checkedTrackColor = NeonButtonBg,
+            checkedBorderColor = NeonButtonOutline,
+            uncheckedThumbColor = Color(0xFF92A6B6),
+            uncheckedTrackColor = Color(0xFF0B1117),
+            uncheckedBorderColor = Color(0xFF42515B),
+            disabledCheckedThumbColor = Color(0xFF597064),
+            disabledCheckedTrackColor = Color(0xFF112019),
+            disabledCheckedBorderColor = Color(0xFF2F4A39),
+            disabledUncheckedThumbColor = Color(0xFF59646B),
+            disabledUncheckedTrackColor = Color(0xFF0B1117),
+            disabledUncheckedBorderColor = Color(0xFF26323B)
+        )
+    )
+}
 
 private data class PolicyAppItem(
     val packageName: String,
@@ -300,6 +375,8 @@ fun ZnetAppScreen(
                     onAutoConnectEnabledChanged = viewModel::setAutoConnectEnabled,
                     onAutoDisconnectEnabledChanged = viewModel::setAutoDisconnectEnabled,
                     onAwayModeChanged = viewModel::setAwayModeEnabled,
+                    onThemeModeChanged = viewModel::setThemeMode,
+                    onLanguageChanged = viewModel::setLanguageCode,
                     onResetPolicies = viewModel::resetAppPoliciesToRecommended,
                     onResetZnetVpn = viewModel::disconnect,
                     onOpenVpnSettings = {
@@ -318,6 +395,9 @@ fun ZnetAppScreen(
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         })
                     },
+                    onOpenBatterySettings = { openBatteryOptimizationSettings(context) },
+                    onOpenAutostartSettings = { openAutostartSettings(context) },
+                    onOpenAppInfoSettings = { openAppInfoSettings(context) },
                     modifier = Modifier.padding(padding)
                 )
             }
@@ -687,7 +767,7 @@ private fun ServersScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF030A10))
+            .background(znetScreenBackgroundColor())
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Row(
@@ -695,7 +775,7 @@ private fun ServersScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Доступ", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text("Доступ", color = znetPrimaryTextColor(), style = MaterialTheme.typography.titleLarge)
             Button(
                 onClick = onRefresh,
                 colors = ButtonDefaults.buttonColors(
@@ -711,7 +791,7 @@ private fun ServersScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         if (state.nodes.isEmpty()) {
-            Text("Доступ еще не получен", color = Color(0xFF9EB0BE))
+            Text("Доступ еще не получен", color = znetSecondaryTextColor())
             return
         }
 
@@ -735,13 +815,13 @@ private fun NodeCard(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    val borderColor = if (selected) Color(0xFF4BFF68) else Color(0xFF182733)
+    val borderColor = if (selected) Color(0xFF4BFF68) else znetMutedBorderColor()
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+        colors = znetCardColors(),
         shape = RoundedCornerShape(14.dp)
     ) {
         Row(
@@ -753,7 +833,7 @@ private fun NodeCard(
             Text(node.flagEmoji, fontSize = 22.sp)
             Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(node.name, color = Color.White, fontWeight = FontWeight.Medium)
+                Text(node.name, color = znetPrimaryTextColor(), fontWeight = FontWeight.Medium)
             }
             if (selected) {
                 Text("Выбран", color = Color(0xFF4BFF68), fontWeight = FontWeight.Bold)
@@ -771,27 +851,30 @@ private fun SettingsSectionSelector(
         listOf(
             SettingsSection.Connection,
             SettingsSection.Apps,
+            SettingsSection.Permissions,
             SettingsSection.Diagnostics
         )
     }
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         sections.forEach { section ->
             val active = section == selected
             Card(
                 modifier = Modifier
-                    .weight(1f)
+                    .widthIn(min = 118.dp)
                     .clickable { onSelected(section) },
                 shape = RoundedCornerShape(8.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (active) NeonButtonBg else Color(0xFF071019),
+                    containerColor = if (active) NeonButtonBg else znetMutedSurfaceColor(),
                 ),
                 border = BorderStroke(
                     width = ControlBorderWidth,
-                    color = if (active) NeonButtonOutline else Color(0x3323333F)
+                    color = if (active) NeonButtonOutline else znetMutedBorderColor()
                 )
             ) {
                 Box(
@@ -802,7 +885,7 @@ private fun SettingsSectionSelector(
                 ) {
                     Text(
                         text = section.title,
-                        color = if (active) NeonGreen else Color(0xFF92A6B6),
+                        color = if (active) NeonGreen else znetSecondaryTextColor(),
                         fontSize = 13.sp,
                         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1
@@ -824,18 +907,25 @@ private fun SettingsScreen(
     onAutoConnectEnabledChanged: (Boolean) -> Unit,
     onAutoDisconnectEnabledChanged: (Boolean) -> Unit,
     onAwayModeChanged: (Boolean) -> Unit,
+    onThemeModeChanged: (String) -> Unit,
+    onLanguageChanged: (String) -> Unit,
     onResetPolicies: () -> Unit,
     onResetZnetVpn: () -> Unit,
     onOpenVpnSettings: () -> Unit,
     onOpenUsageSettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onOpenAutostartSettings: () -> Unit,
+    onOpenAppInfoSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     val recommendedRoutingApps = recommendedRoutingPackages(state)
     val recommendedAutoOnApps = state.automationPolicy.autoConnectApps
     val recommendedAutoOffApps = state.automationPolicy.autoDisconnectApps
+    var activePolicyListName by rememberSaveable { mutableStateOf<String?>(null) }
+    val activePolicyList = activePolicyListName?.let { name ->
+        runCatching { PolicyListKind.valueOf(name) }.getOrNull()
+    }
     var selectedSettingsSectionName by rememberSaveable {
         mutableStateOf(SettingsSection.Connection.name)
     }
@@ -855,15 +945,50 @@ private fun SettingsScreen(
         else -> "Можно подключать Znet. Системная запись VPN без активного туннеля здесь не учитывается."
     }
 
+    if (activePolicyList != null) {
+        val selectedPackages = when (activePolicyList) {
+            PolicyListKind.Routing -> state.routingApps
+            PolicyListKind.AutoOn -> state.autoConnectApps
+            PolicyListKind.AutoOff -> state.autoDisconnectApps
+        }
+        val recommendedPackages = when (activePolicyList) {
+            PolicyListKind.Routing -> recommendedRoutingApps
+            PolicyListKind.AutoOn -> recommendedAutoOnApps
+            PolicyListKind.AutoOff -> recommendedAutoOffApps
+        }
+        val enabled = when (activePolicyList) {
+            PolicyListKind.Routing -> state.routingEnabled
+            PolicyListKind.AutoOn -> state.autoConnectEnabled
+            PolicyListKind.AutoOff -> state.autoDisconnectEnabled
+        }
+        val onTogglePackage = when (activePolicyList) {
+            PolicyListKind.Routing -> onToggleRouting
+            PolicyListKind.AutoOn -> onToggleAutoConnect
+            PolicyListKind.AutoOff -> onToggleAutoDisconnect
+        }
+
+        AppPolicyListScreen(
+            kind = activePolicyList,
+            enabled = enabled,
+            selectedPackages = selectedPackages,
+            recommendedPackages = recommendedPackages,
+            apps = state.installedApps,
+            onTogglePackage = onTogglePackage,
+            onBack = { activePolicyListName = null },
+            modifier = modifier
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF030A10))
+            .background(znetScreenBackgroundColor())
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Настройки", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        Text("Настройки", color = znetPrimaryTextColor(), style = MaterialTheme.typography.titleLarge)
         SettingsSectionSelector(
             selected = selectedSettingsSection,
             onSelected = { section -> selectedSettingsSectionName = section.name }
@@ -872,45 +997,73 @@ private fun SettingsScreen(
         when (selectedSettingsSection) {
             SettingsSection.Connection -> {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Подключение", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Подключение", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                         Text(
                             "Приложение получает доступ через токен из личного кабинета. Добавление устройств и управление ими происходит на стороне биллинга.",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                     }
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Оформление", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
+                        ChoiceRow(
+                            title = "Тема",
+                            selectedValue = state.themeMode,
+                            choices = listOf(
+                                ChoiceChipItem("system", "Системная"),
+                                ChoiceChipItem("dark", "Темная"),
+                                ChoiceChipItem("light", "Светлая")
+                            ),
+                            onSelected = onThemeModeChanged
+                        )
+                        ChoiceRow(
+                            title = "Язык",
+                            selectedValue = state.languageCode,
+                            choices = listOf(
+                                ChoiceChipItem("ru", "🇷🇺 RU"),
+                                ChoiceChipItem("en", "🇺🇸 US")
+                            ),
+                            onSelected = onLanguageChanged
+                        )
+                    }
+                }
+
+                Card(
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Сервер доступа", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Сервер доступа", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                         Text(
                             "Доступ: ${state.apiBaseUrl.ifBlank { "не выбран" }}",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Text(
                             "Личный кабинет: ${state.webBaseUrl}",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Text(
                             "Пул доменов: доступ ${state.apiDomainCount}, сайт ${state.webDomainCount}${formatDomainRevision(state.domainBundleRevision)}",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                     }
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -920,14 +1073,14 @@ private fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("За границей", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("За границей", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                                 Text(
                                     "Российские приложения из Auto OFF будут идти через московскую ноду.",
-                                    color = Color(0xFF92A6B6),
+                                    color = znetSecondaryTextColor(),
                                     fontSize = 12.sp
                                 )
                             }
-                            Switch(
+                            ZnetSwitch(
                                 checked = state.awayModeEnabled,
                                 enabled = state.awayModeAvailable,
                                 onCheckedChange = onAwayModeChanged
@@ -946,7 +1099,7 @@ private fun SettingsScreen(
 
             SettingsSection.Apps -> {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -956,14 +1109,14 @@ private fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Адаптивная сеть", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Адаптивная сеть", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                                 Text(
                                     "Znet будет автоматически применять актуальные настройки подключения.",
-                                    color = Color(0xFF92A6B6),
+                                    color = znetSecondaryTextColor(),
                                     fontSize = 12.sp
                                 )
                             }
-                            Switch(
+                            ZnetSwitch(
                                 checked = state.adaptiveEnabled,
                                 onCheckedChange = onAdaptiveChanged
                             )
@@ -972,14 +1125,14 @@ private fun SettingsScreen(
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Auto ON/OFF", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Auto ON/OFF", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                         Text(
                             "Для автоматического включения и выключения туннеля нужен доступ к активности приложений.",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Row(
@@ -994,7 +1147,7 @@ private fun SettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     "Доступ к активности",
-                                    color = Color.White,
+                                    color = znetPrimaryTextColor(),
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
@@ -1007,7 +1160,7 @@ private fun SettingsScreen(
                                     fontSize = 12.sp
                                 )
                             }
-                            Switch(
+                            ZnetSwitch(
                                 checked = state.usageAccessGranted,
                                 onCheckedChange = { onOpenUsageSettings() }
                             )
@@ -1016,24 +1169,24 @@ private fun SettingsScreen(
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Правила приложений", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Правила приложений", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                         Text(
                             "Рекомендации пришли с сервера. Дальше это локальные настройки этого телефона.",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Text(
                             "Маршрутизация: ${formatRoutingPolicy(state)}",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Text(
                             "Auto ON: ${recommendedAutoOnApps.size} рекомендовано, Auto OFF: ${recommendedAutoOffApps.size} рекомендовано",
-                            color = Color(0xFF92A6B6),
+                            color = znetSecondaryTextColor(),
                             fontSize = 12.sp
                         )
                         Button(
@@ -1050,53 +1203,109 @@ private fun SettingsScreen(
                 }
 
                 AppPolicySection(
-                    title = "Маршрутизация",
+                    title = PolicyListKind.Routing.title,
                     description = "Какие приложения идут через VPN. Если секция выключена, туннель работает для всех приложений.",
                     enabled = state.routingEnabled,
                     selectedPackages = state.routingApps,
                     recommendedPackages = recommendedRoutingApps,
                     apps = state.installedApps,
                     onEnabledChanged = onRoutingEnabledChanged,
-                    onTogglePackage = onToggleRouting
+                    onOpenList = { activePolicyListName = PolicyListKind.Routing.name }
                 )
 
                 AppPolicySection(
-                    title = "Auto ON",
+                    title = PolicyListKind.AutoOn.title,
                     description = "Какие приложения могут автоматически поднимать туннель. Для этого нужен доступ к активности.",
                     enabled = state.autoConnectEnabled,
                     selectedPackages = state.autoConnectApps,
                     recommendedPackages = recommendedAutoOnApps,
                     apps = state.installedApps,
                     onEnabledChanged = onAutoConnectEnabledChanged,
-                    onTogglePackage = onToggleAutoConnect
+                    onOpenList = { activePolicyListName = PolicyListKind.AutoOn.name }
                 )
 
                 AppPolicySection(
-                    title = "Auto OFF",
+                    title = PolicyListKind.AutoOff.title,
                     description = "Какие приложения временно выключают VPN. Этот список имеет приоритет над Auto ON.",
                     enabled = state.autoDisconnectEnabled,
                     selectedPackages = state.autoDisconnectApps,
                     recommendedPackages = recommendedAutoOffApps,
                     apps = state.installedApps,
                     onEnabledChanged = onAutoDisconnectEnabledChanged,
-                    onTogglePackage = onToggleAutoDisconnect
+                    onOpenList = { activePolicyListName = PolicyListKind.AutoOff.name }
+                )
+            }
+
+            SettingsSection.Permissions -> {
+                PermissionStatusCard(
+                    title = "VPN-подключение",
+                    description = "Разрешение Android на создание защищенного туннеля.",
+                    status = if (state.vpnPermissionGranted) "Разрешено" else "Требуется разрешение",
+                    granted = state.vpnPermissionGranted,
+                    actionText = "Настроить VPN",
+                    onClick = onOpenVpnSettings
+                )
+
+                PermissionStatusCard(
+                    title = "Уведомления",
+                    description = "Нужны для карточки активного VPN и службы Auto ON/OFF.",
+                    status = if (state.notificationsEnabled) "Включены" else "Выключены",
+                    granted = state.notificationsEnabled,
+                    actionText = "Открыть уведомления",
+                    onClick = onOpenNotificationSettings
+                )
+
+                PermissionStatusCard(
+                    title = "Доступ к активности",
+                    description = "Позволяет Auto ON/OFF видеть, какое приложение открыто сейчас.",
+                    status = if (state.usageAccessGranted) "Включен" else "Выключен",
+                    granted = state.usageAccessGranted,
+                    actionText = "Открыть доступ",
+                    onClick = onOpenUsageSettings
+                )
+
+                PermissionStatusCard(
+                    title = "Работа в фоне",
+                    description = "Помогает Android не останавливать Znet и Auto ON/OFF при заблокированном экране.",
+                    status = if (state.batteryOptimizationIgnored) "Без ограничений" else "Может быть ограничено",
+                    granted = state.batteryOptimizationIgnored,
+                    actionText = "Разрешить фон",
+                    onClick = onOpenBatterySettings
+                )
+
+                PermissionStatusCard(
+                    title = "Автозапуск",
+                    description = "На Xiaomi, Huawei, Honor, OPPO, Realme и Vivo это отдельная настройка производителя.",
+                    status = "Проверьте вручную",
+                    granted = null,
+                    actionText = "Открыть автозапуск",
+                    onClick = onOpenAutostartSettings
+                )
+
+                PermissionStatusCard(
+                    title = "Ограниченные настройки",
+                    description = "Если APK установлен вручную и Android не дает включить доступ к активности: карточка Znet → три точки → Разрешить ограниченные настройки.",
+                    status = "Только для APK",
+                    granted = null,
+                    actionText = "Открыть карточку Znet",
+                    onClick = onOpenAppInfoSettings
                 )
             }
 
             SettingsSection.Diagnostics -> {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Уведомления", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("Уведомления", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (notificationsEnabled) {
+                            if (state.notificationsEnabled) {
                                 "Znet может показывать активный VPN и автоматику в шторке."
                             } else {
                                 "Уведомления выключены, поэтому сервис работает без карточки в шторке."
                             },
-                            color = if (notificationsEnabled) Color(0xFF92A6B6) else Color(0xFFFFC857),
+                            color = if (state.notificationsEnabled) znetSecondaryTextColor() else Color(0xFFFFC857),
                             fontSize = 12.sp
                         )
                         Button(
@@ -1113,13 +1322,13 @@ private fun SettingsScreen(
                 }
 
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+                    colors = znetCardColors(),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("VPN диагностика", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text(vpnDiagnosticTitle, color = if (state.vpnTransportActive || znetVpnActive) NeonGreen else Color.White)
-                        Text(vpnDiagnosticText, color = Color(0xFF92A6B6), fontSize = 12.sp)
+                        Text("VPN диагностика", color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
+                        Text(vpnDiagnosticTitle, color = if (state.vpnTransportActive || znetVpnActive) NeonGreen else znetPrimaryTextColor())
+                        Text(vpnDiagnosticText, color = znetSecondaryTextColor(), fontSize = 12.sp)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1139,16 +1348,118 @@ private fun SettingsScreen(
                                 onClick = onOpenVpnSettings,
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF101A24),
-                                    contentColor = Color.White
+                                    containerColor = znetMutedSurfaceColor(),
+                                    contentColor = znetPrimaryTextColor()
                                 ),
-                                border = BorderStroke(ControlBorderWidth, Color(0x3348FF70))
+                                border = BorderStroke(ControlBorderWidth, znetMutedBorderColor())
                             ) {
                                 Text("Настройки VPN", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceRow(
+    title: String,
+    selectedValue: String,
+    choices: List<ChoiceChipItem>,
+    onSelected: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = znetSecondaryTextColor(), fontSize = 12.sp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            choices.forEach { choice ->
+                val selected = selectedValue == choice.value
+                Card(
+                    modifier = Modifier
+                        .widthIn(min = 96.dp)
+                        .clickable { onSelected(choice.value) },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selected) NeonButtonBg else znetMutedSurfaceColor()
+                    ),
+                    border = BorderStroke(
+                        ControlBorderWidth,
+                        if (selected) NeonButtonOutline else znetMutedBorderColor()
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            choice.label,
+                            color = if (selected) NeonGreen else znetSecondaryTextColor(),
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionStatusCard(
+    title: String,
+    description: String,
+    status: String,
+    granted: Boolean?,
+    actionText: String,
+    onClick: () -> Unit
+) {
+    val statusColor = when (granted) {
+        true -> NeonGreen
+        false -> Color(0xFFFFC857)
+        null -> znetSecondaryTextColor()
+    }
+
+    Card(
+        colors = znetCardColors(),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
+                    Text(description, color = znetSecondaryTextColor(), fontSize = 12.sp)
+                }
+                Text(
+                    status,
+                    color = statusColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.padding(start = 12.dp)
+                )
+            }
+            Button(
+                onClick = onClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = NeonButtonBg,
+                    contentColor = NeonGreen
+                ),
+                border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
+            ) {
+                Text(actionText)
             }
         }
     }
@@ -1163,11 +1474,8 @@ private fun AppPolicySection(
     recommendedPackages: Set<String>,
     apps: List<InstalledApp>,
     onEnabledChanged: (Boolean) -> Unit,
-    onTogglePackage: (String) -> Unit
+    onOpenList: () -> Unit
 ) {
-    var expanded by rememberSaveable(title) { mutableStateOf(false) }
-    var opening by rememberSaveable("${title}_opening") { mutableStateOf(false) }
-    var query by rememberSaveable("${title}_query") { mutableStateOf("") }
     val normalizedSelected = remember(selectedPackages) { selectedPackages.normalizedPackageSet() }
     val normalizedRecommended = remember(recommendedPackages) { recommendedPackages.normalizedPackageSet() }
     val installedItems = remember(apps) {
@@ -1179,63 +1487,11 @@ private fun AppPolicySection(
             )
         }
     }
-    val installedPackages = remember(installedItems) {
-        installedItems.map { item -> item.packageName }.toSet()
-    }
-    val missingItems = remember(normalizedSelected, normalizedRecommended, installedPackages) {
-        (normalizedSelected + normalizedRecommended)
-            .filterNot { packageName -> installedPackages.contains(packageName) }
-            .sorted()
-            .map { packageName ->
-                PolicyAppItem(
-                    packageName = packageName,
-                    label = packageName,
-                    installed = false
-                )
-            }
-    }
-    val filteredMissingItems = remember(missingItems, query) {
-        missingItems.filterByPolicyQuery(query)
-    }
-    val filteredInstalledItems = remember(installedItems, normalizedSelected, normalizedRecommended, query) {
-        installedItems
-            .filterByPolicyQuery(query)
-            .sortedWith(
-                compareByDescending<PolicyAppItem> { item -> normalizedSelected.contains(item.packageName) }
-                    .thenByDescending { item -> normalizedRecommended.contains(item.packageName) }
-                    .thenBy { item -> item.label.lowercase() }
-                    .thenBy { item -> item.packageName }
-            )
-    }
-    val showRows = expanded || query.isNotBlank()
-    val visibleInstalledItems = remember(filteredInstalledItems, showRows) {
-        if (showRows) filteredInstalledItems else emptyList()
-    }
-    val missingSelectedCount = missingItems.count { item -> normalizedSelected.contains(item.packageName) }
     val installedSelectedCount = installedItems.count { item -> normalizedSelected.contains(item.packageName) }
-
-    LaunchedEffect(opening) {
-        if (opening) {
-            delay(POLICY_LIST_OPEN_DELAY_MS)
-            expanded = true
-            opening = false
-        }
-    }
-
-    fun toggleExpanded() {
-        if (expanded) {
-            expanded = false
-            query = ""
-            return
-        }
-
-        if (!opening) {
-            opening = true
-        }
-    }
+    val installedRecommendedCount = installedItems.count { item -> normalizedRecommended.contains(item.packageName) }
 
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF08131D)),
+        colors = znetCardColors(),
         shape = RoundedCornerShape(14.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1245,94 +1501,119 @@ private fun AppPolicySection(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(title, color = znetPrimaryTextColor(), fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${normalizedSelected.size} выбрано / ${normalizedRecommended.size} рекомендовано / ${installedItems.size} установлено",
-                        color = Color(0xFF92A6B6),
+                        "$installedSelectedCount выбрано / $installedRecommendedCount рекомендовано / ${installedItems.size} установлено",
+                        color = znetSecondaryTextColor(),
                         fontSize = 12.sp
                     )
                 }
-                Switch(checked = enabled, onCheckedChange = onEnabledChanged)
+                ZnetSwitch(checked = enabled, onCheckedChange = onEnabledChanged)
             }
-            Text(description, color = Color(0xFF92A6B6), fontSize = 12.sp)
-
-            if (missingItems.isNotEmpty() && !showRows) {
-                val missingText = if (missingSelectedCount > 0) {
-                    "$missingSelectedCount выбрано, но не установлено"
-                } else {
-                    "${missingItems.size} рекомендовано, но не установлено"
-                }
-                Text(missingText, color = Color(0xFFFFD36A), fontSize = 12.sp)
-            }
-
-            if (showRows) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Поиск приложения") }
-                )
-            }
-
-            if (showRows) {
-                filteredMissingItems.forEach { app ->
-                    PolicyAppRow(
-                        app = app,
-                        enabled = enabled,
-                        selected = normalizedSelected.contains(app.packageName),
-                        recommended = normalizedRecommended.contains(app.packageName),
-                        onTogglePackage = onTogglePackage
-                    )
-                }
-
-                visibleInstalledItems.forEach { app ->
-                    PolicyAppRow(
-                        app = app,
-                        enabled = enabled,
-                        selected = normalizedSelected.contains(app.packageName),
-                        recommended = normalizedRecommended.contains(app.packageName),
-                        onTogglePackage = onTogglePackage
-                    )
-                }
-            }
+            Text(description, color = znetSecondaryTextColor(), fontSize = 12.sp)
 
             Button(
-                onClick = { toggleExpanded() },
+                onClick = onOpenList,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NeonButtonBg,
                     contentColor = NeonGreen
                 ),
                 border = BorderStroke(ControlBorderWidth, NeonButtonOutline)
             ) {
-                if (opening) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(
-                            color = NeonGreen,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text("Открываем список")
-                    }
-                } else {
+                Text("Открыть список (${installedItems.size})")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppPolicyListScreen(
+    kind: PolicyListKind,
+    enabled: Boolean,
+    selectedPackages: Set<String>,
+    recommendedPackages: Set<String>,
+    apps: List<InstalledApp>,
+    onTogglePackage: (String) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var query by rememberSaveable(kind.name) { mutableStateOf("") }
+    val normalizedSelected = remember(selectedPackages) { selectedPackages.normalizedPackageSet() }
+    val normalizedRecommended = remember(recommendedPackages) { recommendedPackages.normalizedPackageSet() }
+    val items = remember(apps, normalizedSelected, normalizedRecommended, query) {
+        apps.map { app ->
+            PolicyAppItem(
+                packageName = app.packageName,
+                label = app.label,
+                installed = true
+            )
+        }
+            .filterByPolicyQuery(query)
+            .sortedWith(
+                compareByDescending<PolicyAppItem> { item -> normalizedSelected.contains(item.packageName) }
+                    .thenByDescending { item -> normalizedRecommended.contains(item.packageName) }
+                    .thenBy { item -> item.label.lowercase() }
+                    .thenBy { item -> item.packageName }
+            )
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(znetScreenBackgroundColor())
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = onBack,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = znetMutedSurfaceColor(),
+                    contentColor = znetPrimaryTextColor()
+                ),
+                border = BorderStroke(ControlBorderWidth, znetMutedBorderColor())
+            ) {
+                Text("Назад")
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(kind.title, color = znetPrimaryTextColor(), style = MaterialTheme.typography.titleLarge)
+                Text(kind.description, color = znetSecondaryTextColor(), fontSize = 12.sp)
+            }
+        }
+
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Поиск приложения") }
+        )
+
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            if (items.isEmpty()) {
+                item {
                     Text(
-                        if (expanded) {
-                            "Свернуть список"
-                        } else {
-                            "Открыть список (${filteredInstalledItems.size})"
-                        }
+                        "Установленные приложения не найдены.",
+                        color = znetSecondaryTextColor(),
+                        modifier = Modifier.padding(top = 10.dp)
                     )
                 }
             }
 
-            if (showRows && installedSelectedCount == 0 && normalizedSelected.isNotEmpty()) {
-                Text(
-                    "Выбранные приложения сохранятся, но применятся только после установки на телефон.",
-                    color = Color(0xFF92A6B6),
-                    fontSize = 12.sp
+            items(items, key = { item -> item.packageName }) { app ->
+                PolicyAppRow(
+                    app = app,
+                    enabled = enabled,
+                    selected = normalizedSelected.contains(app.packageName),
+                    recommended = normalizedRecommended.contains(app.packageName),
+                    onTogglePackage = onTogglePackage
                 )
             }
         }
@@ -1350,9 +1631,8 @@ private fun PolicyAppRow(
     Card(
         colors = CardDefaults.cardColors(
             containerColor = when {
-                !app.installed -> Color(0xFF15130B)
                 recommended -> Color(0xFF071A11)
-                else -> Color(0xFF071019)
+                else -> znetMutedSurfaceColor()
             }
         ),
         shape = RoundedCornerShape(12.dp),
@@ -1375,17 +1655,10 @@ private fun PolicyAppRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = app.label,
-                    color = if (app.installed) Color.White else Color(0xFFFFD36A),
+                    color = znetPrimaryTextColor(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (!app.installed) {
-                    Text(
-                        "Нет на телефоне",
-                        color = Color(0xFFFFD36A),
-                        fontSize = 11.sp
-                    )
-                }
             }
         }
     }
@@ -1400,11 +1673,11 @@ private fun PolicyCheckbox(
     val borderColor = when {
         !enabled -> Color(0xFF26323B)
         checked -> NeonButtonOutline
-        else -> Color(0xFF42515B)
+        else -> znetMutedBorderColor()
     }
     val backgroundColor = when {
         !enabled -> Color(0xFF0B1117)
-        checked -> Color(0xFF0A2413)
+        checked -> NeonButtonBg
         else -> Color.Transparent
     }
 
@@ -1448,7 +1721,7 @@ private fun PolicyAppIcon(app: PolicyAppItem) {
         modifier = Modifier
             .size(34.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (app.installed) Color(0xFF101B25) else Color(0xFF211D11)),
+            .background(znetMutedSurfaceColor()),
         contentAlignment = Alignment.Center
     ) {
         if (iconBitmap != null) {
@@ -1460,7 +1733,7 @@ private fun PolicyAppIcon(app: PolicyAppItem) {
         } else {
             Text(
                 text = app.label.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                color = Color(0xFFFFD36A),
+                color = znetPrimaryTextColor(),
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -1486,7 +1759,6 @@ private fun List<PolicyAppItem>.filterByPolicyQuery(query: String): List<PolicyA
 }
 
 private const val POLICY_APP_ICON_PX = 96
-private const val POLICY_LIST_OPEN_DELAY_MS = 160L
 private val ExpiryDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm")
 private val ExpiryDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yy")
 private val ServerDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -1555,4 +1827,73 @@ private fun formatExpiryDate(rawValue: String?): String? {
 private fun formatDomainRevision(revision: String?): String {
     val cleanRevision = revision?.trim()?.takeIf { it.isNotBlank() } ?: return ""
     return ", версия $cleanRevision"
+}
+
+private fun openBatteryOptimizationSettings(context: Context) {
+    val intents = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            add(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                )
+            )
+            add(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+        add(appInfoIntent(context))
+    }
+    startFirstResolvableActivity(context, intents)
+}
+
+private fun openAutostartSettings(context: Context) {
+    val intents = mutableListOf<Intent>()
+    val manufacturer = Build.MANUFACTURER.lowercase()
+
+    fun addComponent(packageName: String, className: String) {
+        intents += Intent().setComponent(ComponentName(packageName, className))
+    }
+
+    if ("xiaomi" in manufacturer || "redmi" in manufacturer || "poco" in manufacturer) {
+        addComponent("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+    }
+    if ("huawei" in manufacturer || "honor" in manufacturer) {
+        addComponent("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")
+        addComponent("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity")
+    }
+    if ("oppo" in manufacturer || "realme" in manufacturer || "oneplus" in manufacturer) {
+        addComponent("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
+        addComponent("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity")
+    }
+    if ("vivo" in manufacturer || "iqoo" in manufacturer) {
+        addComponent("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
+        addComponent("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")
+    }
+
+    intents += appInfoIntent(context)
+    startFirstResolvableActivity(context, intents)
+}
+
+private fun openAppInfoSettings(context: Context) {
+    startFirstResolvableActivity(context, listOf(appInfoIntent(context)))
+}
+
+private fun appInfoIntent(context: Context): Intent {
+    return Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.parse("package:${context.packageName}")
+    )
+}
+
+private fun startFirstResolvableActivity(
+    context: Context,
+    intents: List<Intent>
+) {
+    val packageManager = context.packageManager
+    val intent = intents.firstOrNull { candidate ->
+        candidate.resolveActivity(packageManager) != null
+    } ?: Intent(Settings.ACTION_SETTINGS)
+
+    context.startActivity(intent.apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    })
 }

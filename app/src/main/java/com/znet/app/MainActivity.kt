@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
                 )
                 val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-                ZnetTheme {
+                ZnetTheme(themeMode = state.themeMode) {
                     ZnetAppScreen(state = state, viewModel = viewModel)
                 }
             }

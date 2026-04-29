@@ -5,7 +5,11 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.VpnService
+import android.os.Build
+import android.os.PowerManager
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -69,8 +73,13 @@ data class MainUiState(
     val authError: String? = null,
     val authInProgress: Boolean = false,
     val pendingAutoConnect: Boolean = false,
+    val vpnPermissionGranted: Boolean = false,
     val vpnTransportActive: Boolean = false,
     val usageAccessGranted: Boolean = false,
+    val notificationsEnabled: Boolean = false,
+    val batteryOptimizationIgnored: Boolean = false,
+    val themeMode: String = "system",
+    val languageCode: String = "ru",
     val isBusy: Boolean = false,
     val message: String? = null
 )
@@ -93,8 +102,11 @@ class MainViewModel(
 
     private val authInProgress = MutableStateFlow(false)
     private val pendingAutoConnect = MutableStateFlow(false)
+    private val vpnPermissionGranted = MutableStateFlow(false)
     private val vpnTransportActive = MutableStateFlow(false)
     private val usageAccessGranted = MutableStateFlow(false)
+    private val notificationsEnabled = MutableStateFlow(false)
+    private val batteryOptimizationIgnored = MutableStateFlow(false)
     private val resolvedAccess = MutableStateFlow<ResolvedNodeAccess?>(null)
     private val sessionValidationInProgress = MutableStateFlow(false)
     private var usageAccessPromptShown = false
@@ -115,8 +127,11 @@ class MainViewModel(
         authInProgress,
         pendingAutoConnect,
         resolvedAccess,
+        vpnPermissionGranted,
         vpnTransportActive,
-        usageAccessGranted
+        usageAccessGranted,
+        notificationsEnabled,
+        batteryOptimizationIgnored
     ) { values ->
         val prefs = values[0] as UserPreferences
         val status = values[1] as VpnStatus
@@ -130,8 +145,11 @@ class MainViewModel(
         val authorizing = values[9] as Boolean
         val shouldAutoConnect = values[10] as Boolean
         val access = values[11] as ResolvedNodeAccess?
-        val hasVpnTransport = values[12] as Boolean
-        val hasUsageAccess = values[13] as Boolean
+        val hasVpnPermission = values[12] as Boolean
+        val hasVpnTransport = values[13] as Boolean
+        val hasUsageAccess = values[14] as Boolean
+        val canShowNotifications = values[15] as Boolean
+        val ignoresBatteryOptimization = values[16] as Boolean
 
         val activeProfile = access?.let { activeProfile(it, prefs) }
         val selectedNode = activeProfile?.node
@@ -171,8 +189,13 @@ class MainViewModel(
             authError = currentAuthError,
             authInProgress = authorizing,
             pendingAutoConnect = shouldAutoConnect,
+            vpnPermissionGranted = hasVpnPermission,
             vpnTransportActive = hasVpnTransport,
             usageAccessGranted = hasUsageAccess,
+            notificationsEnabled = canShowNotifications,
+            batteryOptimizationIgnored = ignoresBatteryOptimization,
+            themeMode = prefs.themeMode,
+            languageCode = prefs.languageCode,
             isBusy = isBusyValue,
             message = status.errorMessage
         )
@@ -356,6 +379,18 @@ class MainViewModel(
         }
     }
 
+    fun setThemeMode(themeMode: String) {
+        viewModelScope.launch {
+            preferencesRepository.setThemeMode(themeMode)
+        }
+    }
+
+    fun setLanguageCode(languageCode: String) {
+        viewModelScope.launch {
+            preferencesRepository.setLanguageCode(languageCode)
+        }
+    }
+
     fun toggleRoutingApp(packageName: String) {
         viewModelScope.launch {
             val prefs = preferencesRepository.preferences.first()
@@ -491,8 +526,13 @@ class MainViewModel(
     }
 
     fun refreshVpnEnvironment() {
+        vpnPermissionGranted.value = detectVpnPermission()
         vpnTransportActive.value = detectVpnTransport()
         usageAccessGranted.value = vpnRepository.hasUsageAccess()
+        notificationsEnabled.value = NotificationManagerCompat
+            .from(getApplication())
+            .areNotificationsEnabled()
+        batteryOptimizationIgnored.value = detectBatteryOptimizationIgnored()
     }
 
     fun clearMessage() {
@@ -831,6 +871,24 @@ class MainViewModel(
                 connectivityManager.getNetworkCapabilities(network)
                     ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
             }
+        }.getOrDefault(false)
+    }
+
+    private fun detectVpnPermission(): Boolean {
+        return runCatching {
+            VpnService.prepare(getApplication()) == null
+        }.getOrDefault(false)
+    }
+
+    private fun detectBatteryOptimizationIgnored(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true
+        }
+
+        return runCatching {
+            val powerManager = getApplication<Application>()
+                .getSystemService(Application.POWER_SERVICE) as PowerManager
+            powerManager.isIgnoringBatteryOptimizations(getApplication<Application>().packageName)
         }.getOrDefault(false)
     }
 
