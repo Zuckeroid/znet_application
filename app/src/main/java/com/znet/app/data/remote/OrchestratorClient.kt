@@ -60,6 +60,64 @@ class OrchestratorClient(
         }
     }
 
+    suspend fun submitTelemetryEvent(
+        baseUrl: String,
+        token: String,
+        event: NetworkTelemetryEvent
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalizedBase = baseUrl.trimEnd('/')
+            require(normalizedBase.isNotBlank()) { "Telemetry API is not configured" }
+            require(token.isNotBlank()) { INVALID_TOKEN_MESSAGE }
+
+            val requestPayload = json.encodeToString(
+                TelemetrySubmitRequest.serializer(),
+                TelemetrySubmitRequest(
+                    appToken = token.trim(),
+                    eventType = event.eventType,
+                    result = event.result,
+                    classification = event.classification,
+                    nodeId = event.nodeId,
+                    nodeName = event.nodeName,
+                    nodeCountry = event.nodeCountry,
+                    nodeHost = event.nodeHost,
+                    nodePort = event.nodePort,
+                    protocol = event.protocol,
+                    transport = event.transport,
+                    networkType = event.networkType,
+                    carrierName = event.carrierName,
+                    mcc = event.mcc,
+                    mnc = event.mnc,
+                    appVersion = event.appVersion,
+                    platform = event.platform,
+                    installIdHash = event.installIdHash,
+                    deviceConfigId = event.deviceConfigId,
+                    latencyMs = event.latencyMs,
+                    errorCode = event.errorCode,
+                    errorMessage = event.errorMessage,
+                    details = event.details,
+                    observedAt = event.observedAt
+                )
+            ).toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url("$normalizedBase$TELEMETRY_PATH".toHttpUrl())
+                .post(requestPayload)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val rawBody = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw TokenAuthRequestException(
+                        message = extractApiErrorMessage(rawBody)
+                            ?: "Telemetry rejected: ${response.code}",
+                        statusCode = response.code
+                    )
+                }
+            }
+        }
+    }
+
     private fun executeTokenAuthRequest(
         endpoint: okhttp3.HttpUrl,
         token: String,
@@ -437,6 +495,7 @@ class OrchestratorClient(
 
     private companion object {
         const val TOKEN_AUTH_PATH = "/api/guest/appbridge/token_login"
+        const val TELEMETRY_PATH = "/api/guest/appbridge/telemetry"
         const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
     }
 }
@@ -457,6 +516,62 @@ data class DeviceRegistrationData(
     val deviceName: String,
     val platform: String,
     val installId: String
+)
+
+@Serializable
+data class NetworkTelemetryEvent(
+    val eventType: String,
+    val result: String,
+    val classification: String? = null,
+    val nodeId: String? = null,
+    val nodeName: String? = null,
+    val nodeCountry: String? = null,
+    val nodeHost: String? = null,
+    val nodePort: Int? = null,
+    val protocol: String? = null,
+    val transport: String? = null,
+    val networkType: String? = null,
+    val carrierName: String? = null,
+    val mcc: String? = null,
+    val mnc: String? = null,
+    val appVersion: String? = null,
+    val platform: String? = null,
+    val installIdHash: String? = null,
+    val deviceConfigId: String? = null,
+    val latencyMs: Int? = null,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val details: Map<String, String>? = null,
+    val observedAt: String? = null
+)
+
+@Serializable
+private data class TelemetrySubmitRequest(
+    @SerialName("app_token")
+    val appToken: String,
+    val eventType: String,
+    val result: String,
+    val classification: String? = null,
+    val nodeId: String? = null,
+    val nodeName: String? = null,
+    val nodeCountry: String? = null,
+    val nodeHost: String? = null,
+    val nodePort: Int? = null,
+    val protocol: String? = null,
+    val transport: String? = null,
+    val networkType: String? = null,
+    val carrierName: String? = null,
+    val mcc: String? = null,
+    val mnc: String? = null,
+    val appVersion: String? = null,
+    val platform: String? = null,
+    val installIdHash: String? = null,
+    val deviceConfigId: String? = null,
+    val latencyMs: Int? = null,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val details: Map<String, String>? = null,
+    val observedAt: String? = null
 )
 
 data class TokenAccessResponse(

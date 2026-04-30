@@ -101,7 +101,21 @@ object NodeLinkConfigFactory {
         )
     }
 
-    private fun extractTransport(config: String): String? {
+    fun extractProtocol(config: String): String? {
+        val parsed = runCatching {
+            Json.parseToJsonElement(config).jsonObject
+        }.getOrNull() ?: return null
+
+        val outbound = (parsed["outbounds"] as? JsonArray)
+            ?.firstOrNull { item -> item is JsonObject } as? JsonObject
+
+        return (outbound?.get("protocol") as? JsonPrimitive)
+            ?.contentOrNull
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    fun extractTransport(config: String): String? {
         val parsed = runCatching {
             Json.parseToJsonElement(config).jsonObject
         }.getOrNull() ?: return null

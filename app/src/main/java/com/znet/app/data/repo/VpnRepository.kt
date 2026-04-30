@@ -4,9 +4,13 @@ import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Process
+import android.telephony.TelephonyManager
 import android.util.Log
+import com.znet.app.BuildConfig
 import com.znet.app.data.UserPreferencesRepository
 import com.znet.app.data.model.InstalledApp
 import com.znet.app.data.model.ServerNode
@@ -14,6 +18,7 @@ import com.znet.app.data.remote.AccessNotReadyException
 import com.znet.app.data.remote.AppAutomationPolicy
 import com.znet.app.data.remote.AppRoutingPolicy
 import com.znet.app.data.remote.DeviceRegistrationData
+import com.znet.app.data.remote.NetworkTelemetryEvent
 import com.znet.app.data.remote.NoActiveAccessException
 import com.znet.app.data.remote.OrchestratorClient
 import com.znet.app.data.remote.TokenAccessResponse
@@ -22,8 +27,15 @@ import com.znet.app.data.remote.InvalidTokenException
 import com.znet.app.vpn.AppAutomationMonitorService
 import com.znet.app.vpn.ZnetVpnService
 import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketTimeoutException
+import java.time.Instant
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -34,6 +46,8 @@ class VpnRepository(
     private val orchestratorClient: OrchestratorClient,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
+    private val telemetryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     suspend fun authenticateWithToken(token: String): Result<ResolvedNodeAccess> {
         return runCatching {
             val cleanToken = token.trim()
@@ -145,6 +159,11 @@ class VpnRepository(
         val effectiveAutoDisconnectApps =
             (automationPolicy.autoDisconnectApps + autoDisconnectApps).normalizePackageSet()
         val runtimeConfig = NodeLinkConfigFactory.normalizeRuntimeConfig(xrayConfig)
+        submitNodeTcpProbe(
+            node = node,
+            protocol = NodeLinkConfigFactory.extractProtocol(runtimeConfig).orEmpty(),
+            transport = NodeLinkConfigFactory.extractTransport(runtimeConfig).orEmpty()
+        )
 
         val intent = Intent(context, ZnetVpnService::class.java).apply {
             action = ZnetVpnService.ACTION_CONNECT
@@ -178,6 +197,118 @@ class VpnRepository(
 
     fun stopAutomationMonitor() {
         context.stopService(Intent(context, AppAutomationMonitorService::class.java))
+    }
+
+    private fun submitNodeTcpProbe(
+        node: ServerNode,
+        protocol: String,
+        transport: String
+    ) {
+        telemetryScope.launch {
+            val prefs = preferencesRepository.preferences.first()
+            val token = prefs.deviceToken.trim()
+            val baseUrl = preferencesRepository.apiBaseUrlCandidates(prefs).firstOrNull().orEmpty()
+            if (token.isBlank() || baseUrl.isBlank()) {
+                return@launch
+            }
+
+            val network = currentNetworkSnapshot()
+            val startedAt = System.nanoTime()
+            var result = "success"
+            var errorCode: String? = null
+            var errorMessage: String? = null
+
+            if (node.host.isBlank() || node.host == "unknown" || node.port !in 1..65535) {
+                result = "skipped"
+                errorCode = "NODE_ENDPOINT_MISSING"
+                errorMessage = "Node host or port is missing"
+            } else {
+                runCatching {
+                    Socket().use { socket ->
+                        socket.connect(
+                            InetSocketAddress(node.host, node.port),
+                            TCP_PROBE_TIMEOUT_MS
+                        )
+                    }
+                }.onFailure { error ->
+                    result = if (error is SocketTimeoutException) "timeout" else "failed"
+                    errorCode = error.javaClass.simpleName
+                    errorMessage = error.message?.take(300)
+                }
+            }
+
+            val latencyMs = ((System.nanoTime() - startedAt) / 1_000_000L)
+                .coerceIn(0L, 120_000L)
+                .toInt()
+            val event = NetworkTelemetryEvent(
+                eventType = "node_tcp_connect",
+                result = result,
+                classification = if (result == "success" || result == "skipped") {
+                    null
+                } else {
+                    "ip_or_port_suspected"
+                },
+                nodeId = node.id.takeIf { it.isNotBlank() },
+                nodeName = node.name.takeIf { it.isNotBlank() },
+                nodeCountry = node.country.takeIf { it.isNotBlank() },
+                nodeHost = node.host.takeIf { it.isNotBlank() && it != "unknown" },
+                nodePort = node.port.takeIf { it in 1..65535 },
+                protocol = protocol.takeIf { it.isNotBlank() },
+                transport = transport.takeIf { it.isNotBlank() },
+                networkType = network.networkType,
+                carrierName = network.carrierName,
+                mcc = network.mcc,
+                mnc = network.mnc,
+                appVersion = BuildConfig.VERSION_NAME,
+                platform = "android",
+                latencyMs = latencyMs,
+                errorCode = errorCode,
+                errorMessage = errorMessage,
+                details = mapOf(
+                    "source" to "pre_vpn_connect_probe",
+                    "app_environment" to BuildConfig.APP_ENVIRONMENT
+                ),
+                observedAt = Instant.now().toString()
+            )
+
+            orchestratorClient.submitTelemetryEvent(
+                baseUrl = baseUrl,
+                token = token,
+                event = event
+            ).onFailure { error ->
+                Log.w(TAG, "Telemetry submit failed", error)
+            }
+        }
+    }
+
+    private fun currentNetworkSnapshot(): NetworkSnapshot {
+        val connectivityManager =
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val capabilities =
+            connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        val networkType = when {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "cellular"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "ethernet"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "vpn"
+            else -> "unknown"
+        }
+        val telephonyManager =
+            context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val operator = runCatching {
+            telephonyManager?.networkOperator?.trim().orEmpty()
+        }.getOrDefault("")
+
+        return NetworkSnapshot(
+            networkType = networkType,
+            carrierName = runCatching {
+                telephonyManager?.networkOperatorName?.trim()
+            }.getOrNull()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() },
+            mcc = operator.takeIf { it.length >= 3 }?.substring(0, 3),
+            mnc = operator.takeIf { it.length > 3 }?.substring(3)
+        )
     }
 
     fun hasUsageAccess(): Boolean {
@@ -374,6 +505,7 @@ class VpnRepository(
     private companion object {
         const val TAG = "ZnetAccess"
         const val REQUIRED_TOKEN_LENGTH = 32
+        const val TCP_PROBE_TIMEOUT_MS = 5_000
         const val INVALID_TOKEN_MESSAGE = "Некорректный токен"
         const val ACCESS_NOT_READY_MESSAGE = "Доступ пока не готов"
     }
@@ -382,4 +514,11 @@ class VpnRepository(
 private data class DomainResolvedAccess(
     val access: TokenAccessResponse,
     val apiBaseUrl: String
+)
+
+private data class NetworkSnapshot(
+    val networkType: String,
+    val carrierName: String?,
+    val mcc: String?,
+    val mnc: String?
 )
