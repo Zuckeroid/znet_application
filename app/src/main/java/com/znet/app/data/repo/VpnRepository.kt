@@ -144,11 +144,12 @@ class VpnRepository(
         )
         val effectiveAutoDisconnectApps =
             (automationPolicy.autoDisconnectApps + autoDisconnectApps).normalizePackageSet()
+        val runtimeConfig = NodeLinkConfigFactory.normalizeRuntimeConfig(xrayConfig)
 
         val intent = Intent(context, ZnetVpnService::class.java).apply {
             action = ZnetVpnService.ACTION_CONNECT
             putExtra(ZnetVpnService.EXTRA_NODE, json.encodeToString(node))
-            putExtra(ZnetVpnService.EXTRA_XRAY_CONFIG, xrayConfig)
+            putExtra(ZnetVpnService.EXTRA_XRAY_CONFIG, runtimeConfig)
             putExtra(ZnetVpnService.EXTRA_ALLOWED_APPS, allowedApps.toTypedArray())
             putExtra(ZnetVpnService.EXTRA_SPLIT_TUNNEL_APPS, disallowedApps.toTypedArray())
             putExtra(ZnetVpnService.EXTRA_AUTO_DISCONNECT_APPS, effectiveAutoDisconnectApps.toTypedArray())

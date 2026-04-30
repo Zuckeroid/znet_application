@@ -178,7 +178,11 @@ class ZnetVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
 
-        if (allowedApps.isNotEmpty()) {
+        val needsBrowserSafeTunnel = allowedApps.any { packageName ->
+            packageName in CHROMIUM_BROWSER_PACKAGES
+        }
+
+        if (allowedApps.isNotEmpty() && !needsBrowserSafeTunnel) {
             var acceptedAllowedApps = 0
             allowedApps
                 .filterNot { allowedPackage -> allowedPackage == packageName }
@@ -195,6 +199,10 @@ class ZnetVpnService : VpnService() {
                 error("В выбранном списке нет установленных приложений")
             }
         } else {
+            if (needsBrowserSafeTunnel) {
+                appendDebug("vpn browser safe full tunnel enabled")
+                Log.i(TAG, "Browser safe full tunnel enabled for selected Chromium app")
+            }
             (disallowedApps + packageName).forEach { blockedPackage ->
                 runCatching {
                     builder.addDisallowedApplication(blockedPackage)
@@ -356,6 +364,20 @@ class ZnetVpnService : VpnService() {
         private const val CHANNEL_ID = "znet_vpn_channel"
         private const val NOTIFICATION_ID = 7_001
         private const val FOREGROUND_LOOKBACK_MS = 10_000L
+        private val CHROMIUM_BROWSER_PACKAGES = setOf(
+            "com.android.chrome",
+            "com.chrome.beta",
+            "com.chrome.dev",
+            "com.chrome.canary",
+            "com.microsoft.emmx",
+            "com.brave.browser",
+            "com.yandex.browser",
+            "com.yandex.browser.beta",
+            "com.opera.browser",
+            "com.opera.browser.beta",
+            "com.vivaldi.browser",
+            "com.kiwibrowser.browser"
+        )
 
         const val ACTION_CONNECT = "com.znet.app.action.CONNECT"
         const val ACTION_DISCONNECT = "com.znet.app.action.DISCONNECT"

@@ -118,43 +118,200 @@ object NodeLinkConfigFactory {
             ?.takeIf { it.isNotBlank() }
     }
 
-    private fun normalizeRuntimeConfig(rawConfig: String): String {
+    fun normalizeRuntimeConfig(rawConfig: String): String {
         val parsed = runCatching {
             Json.parseToJsonElement(rawConfig).jsonObject
         }.getOrNull() ?: return rawConfig
 
-        val hasTunInbound = (parsed["inbounds"] as? JsonArray)
-            ?.any { inbound ->
-                (inbound as? JsonObject)?.get("protocol")
-                    ?.let { it as? JsonPrimitive }
-                    ?.contentOrNull
-                    ?.equals("tun", ignoreCase = true) == true
-            } == true
-
-        if (hasTunInbound) {
-            return rawConfig
-        }
-
         return buildJsonObject {
             parsed.forEach { (key, value) ->
-                if (key != "inbounds") {
+                if (key != "inbounds" && key != "outbounds" && key != "routing") {
                     put(key, value)
                 }
             }
-            put("inbounds", buildJsonArray {
-                add(
-                    buildJsonObject {
-                        put("tag", JsonPrimitive("tun-in"))
-                        put("port", JsonPrimitive(0))
-                        put("protocol", JsonPrimitive("tun"))
-                        put("settings", buildJsonObject {
-                            put("name", JsonPrimitive("xray0"))
-                            put("MTU", JsonPrimitive(1500))
-                        })
-                    }
-                )
-            })
+            put("inbounds", ensureTunInbound(parsed["inbounds"] as? JsonArray))
+            put("outbounds", ensureCoreOutbounds(parsed["outbounds"] as? JsonArray))
+            put("routing", ensureRuntimeRouting(parsed["routing"] as? JsonObject))
         }.toString()
+    }
+
+    private fun ensureTunInbound(inbounds: JsonArray?): JsonArray {
+        val existingInbounds = inbounds ?: buildJsonArray { }
+        val hasTunInbound = existingInbounds.any { inbound ->
+            (inbound as? JsonObject)?.get("protocol")
+                ?.let { it as? JsonPrimitive }
+                ?.contentOrNull
+                ?.equals("tun", ignoreCase = true) == true
+        }
+
+        if (hasTunInbound) {
+            return existingInbounds
+        }
+
+        return buildJsonArray {
+            existingInbounds.forEach { inbound -> add(inbound) }
+            add(buildTunInbound())
+        }
+    }
+
+    private fun ensureCoreOutbounds(outbounds: JsonArray?): JsonArray {
+        val existingOutbounds = outbounds ?: buildJsonArray { }
+        val hasDirectOutbound = existingOutbounds.any { outbound ->
+            (outbound as? JsonObject)?.get("tag")
+                ?.let { it as? JsonPrimitive }
+                ?.contentOrNull
+                ?.equals("direct", ignoreCase = true) == true
+        }
+        val hasBlockOutbound = existingOutbounds.any { outbound ->
+            (outbound as? JsonObject)?.get("tag")
+                ?.let { it as? JsonPrimitive }
+                ?.contentOrNull
+                ?.equals("block", ignoreCase = true) == true
+        }
+
+        if (hasDirectOutbound && hasBlockOutbound) {
+            return existingOutbounds
+        }
+
+        return buildJsonArray {
+            existingOutbounds.forEach { outbound -> add(outbound) }
+            if (!hasDirectOutbound) {
+                add(buildDirectOutbound())
+            }
+            if (!hasBlockOutbound) {
+                add(buildBlockOutbound())
+            }
+        }
+    }
+
+    private fun ensureRuntimeRouting(routing: JsonObject?): JsonObject {
+        val existingRules = routing?.get("rules") as? JsonArray
+        val hasDirectDnsRule = existingRules?.any { rule ->
+            val ruleObject = rule as? JsonObject
+            val outboundTag = (ruleObject?.get("outboundTag") as? JsonPrimitive)?.contentOrNull
+            val port = (ruleObject?.get("port") as? JsonPrimitive)?.contentOrNull
+            outboundTag.equals("direct", ignoreCase = true) && port?.contains("53") == true
+        } == true
+        val hasDirectDohRule = existingRules?.any { rule ->
+            val ruleObject = rule as? JsonObject
+            val outboundTag = (ruleObject?.get("outboundTag") as? JsonPrimitive)?.contentOrNull
+            val port = (ruleObject?.get("port") as? JsonPrimitive)?.contentOrNull
+            val ip = ruleObject?.get("ip") as? JsonArray
+            outboundTag.equals("direct", ignoreCase = true) &&
+                port == "443" &&
+                ip?.any { item -> (item as? JsonPrimitive)?.contentOrNull == "8.8.8.8" } == true
+        } == true
+        val hasBlockQuicRule = existingRules?.any { rule ->
+            val ruleObject = rule as? JsonObject
+            val outboundTag = (ruleObject?.get("outboundTag") as? JsonPrimitive)?.contentOrNull
+            val network = (ruleObject?.get("network") as? JsonPrimitive)?.contentOrNull
+            val port = (ruleObject?.get("port") as? JsonPrimitive)?.contentOrNull
+            outboundTag.equals("block", ignoreCase = true) &&
+                network.equals("udp", ignoreCase = true) &&
+                port == "443"
+        } == true
+
+        return buildJsonObject {
+            routing?.forEach { (key, value) ->
+                if (key != "rules") {
+                    put(key, value)
+                }
+            }
+            if (routing?.containsKey("domainStrategy") != true) {
+                put("domainStrategy", JsonPrimitive("IPIfNonMatch"))
+            }
+            put("rules", buildJsonArray {
+                if (!hasDirectDnsRule) {
+                    add(buildDirectDnsRule())
+                }
+                if (!hasDirectDohRule) {
+                    add(buildDirectDohRule())
+                }
+                if (!hasBlockQuicRule) {
+                    add(buildBlockQuicRule())
+                }
+                existingRules?.forEach { rule -> add(rule) }
+            })
+        }
+    }
+
+    private fun buildTunInbound(): JsonObject {
+        return buildJsonObject {
+            put("tag", JsonPrimitive("tun-in"))
+            put("port", JsonPrimitive(0))
+            put("protocol", JsonPrimitive("tun"))
+            put("settings", buildJsonObject {
+                put("name", JsonPrimitive("xray0"))
+                put("MTU", JsonPrimitive(1500))
+            })
+        }
+    }
+
+    private fun buildDirectOutbound(): JsonObject {
+        return buildJsonObject {
+            put("tag", JsonPrimitive("direct"))
+            put("protocol", JsonPrimitive("freedom"))
+        }
+    }
+
+    private fun buildBlockOutbound(): JsonObject {
+        return buildJsonObject {
+            put("tag", JsonPrimitive("block"))
+            put("protocol", JsonPrimitive("blackhole"))
+        }
+    }
+
+    private fun buildDirectDnsRule(): JsonObject {
+        return buildJsonObject {
+            put("type", JsonPrimitive("field"))
+            put("inboundTag", buildJsonArray {
+                add(JsonPrimitive("tun-in"))
+            })
+            put("network", JsonPrimitive("tcp,udp"))
+            put("port", JsonPrimitive("53,853"))
+            put("outboundTag", JsonPrimitive("direct"))
+        }
+    }
+
+    private fun buildDirectDohRule(): JsonObject {
+        return buildJsonObject {
+            put("type", JsonPrimitive("field"))
+            put("inboundTag", buildJsonArray {
+                add(JsonPrimitive("tun-in"))
+            })
+            put("network", JsonPrimitive("tcp,udp"))
+            put("port", JsonPrimitive("443"))
+            put("ip", buildJsonArray {
+                listOf(
+                    "1.1.1.1",
+                    "1.0.0.1",
+                    "8.8.8.8",
+                    "8.8.4.4",
+                    "9.9.9.9",
+                    "77.88.8.8",
+                    "77.88.8.1",
+                    "104.16.248.249",
+                    "104.16.249.249",
+                    "162.159.36.1",
+                    "162.159.46.1",
+                    "162.159.61.3",
+                    "172.64.41.3"
+                ).forEach { address -> add(JsonPrimitive(address)) }
+            })
+            put("outboundTag", JsonPrimitive("direct"))
+        }
+    }
+
+    private fun buildBlockQuicRule(): JsonObject {
+        return buildJsonObject {
+            put("type", JsonPrimitive("field"))
+            put("inboundTag", buildJsonArray {
+                add(JsonPrimitive("tun-in"))
+            })
+            put("network", JsonPrimitive("udp"))
+            put("port", JsonPrimitive("443"))
+            put("outboundTag", JsonPrimitive("block"))
+        }
     }
 
     private fun parseLink(rawLink: String): ParsedLink {
@@ -374,25 +531,12 @@ object NodeLinkConfigFactory {
             })
             put("inbounds", buildJsonArray {
                 add(
-                    buildJsonObject {
-                        put("tag", JsonPrimitive("tun-in"))
-                        put("port", JsonPrimitive(0))
-                        put("protocol", JsonPrimitive("tun"))
-                        put("settings", buildJsonObject {
-                            put("name", JsonPrimitive("xray0"))
-                            put("MTU", JsonPrimitive(1500))
-                        })
-                    }
+                    buildTunInbound()
                 )
             })
             put("outbounds", buildJsonArray {
                 add(primaryOutbound)
-                add(
-                    buildJsonObject {
-                        put("tag", JsonPrimitive("direct"))
-                        put("protocol", JsonPrimitive("freedom"))
-                    }
-                )
+                add(buildDirectOutbound())
                 add(
                     buildJsonObject {
                         put("tag", JsonPrimitive("block"))
@@ -400,9 +544,7 @@ object NodeLinkConfigFactory {
                     }
                 )
             })
-            put("routing", buildJsonObject {
-                put("domainStrategy", JsonPrimitive("IPIfNonMatch"))
-            })
+            put("routing", ensureRuntimeRouting(null))
         }
         return config.toString()
     }
